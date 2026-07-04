@@ -533,6 +533,14 @@ except ImportError:
     CUDADijkstra = None
     CUDA_DIJKSTRA_AVAILABLE = False
 
+# Metal GPU pathfinding (Apple Silicon)
+try:
+    import orthoroute_mac
+    METAL_AVAILABLE = True
+except ImportError:
+    orthoroute_mac = None
+    METAL_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2174,12 +2182,13 @@ class PathFinderRouter:
 
         self.solver = SimpleDijkstra(self.graph, self.lattice)
 
-        # Add GPU solver if available
+        # Add GPU solver if available (CUDA first, then Metal, then CPU-only)
         use_gpu_solver = self.config.use_gpu and GPU_AVAILABLE and CUDA_DIJKSTRA_AVAILABLE
+        use_metal_solver = self.config.use_gpu and METAL_AVAILABLE and not use_gpu_solver
 
         # Enhanced debug logging
-        logger.info(f"[GPU-INIT] config.use_gpu={self.config.use_gpu}, GPU_AVAILABLE={GPU_AVAILABLE}, CUDA_DIJKSTRA_AVAILABLE={CUDA_DIJKSTRA_AVAILABLE}")
-        logger.info(f"[GPU-INIT] use_gpu_solver={use_gpu_solver}")
+        logger.info(f"[GPU-INIT] config.use_gpu={self.config.use_gpu}, GPU_AVAILABLE={GPU_AVAILABLE}, CUDA_DIJKSTRA_AVAILABLE={CUDA_DIJKSTRA_AVAILABLE}, METAL_AVAILABLE={METAL_AVAILABLE}")
+        logger.info(f"[GPU-INIT] use_gpu_solver={use_gpu_solver}, use_metal_solver={use_metal_solver}")
 
         if use_gpu_solver:
             try:
@@ -2193,6 +2202,24 @@ class PathFinderRouter:
             except Exception as e:
                 logger.warning(f"[GPU] Failed to initialize CUDA Dijkstra: {e}")
                 self.solver.gpu_solver = None
+        elif use_metal_solver:
+            try:
+                # Create MetalDijkstra instance and set up the CSR graph
+                metal_dijkstra = orthoroute_mac.MetalDijkstra()
+                # Feed the CSR graph to the Metal backend
+                indptr_np = np.ascontiguousarray(self.graph.indptr, dtype=np.int32)
+                indices_np = np.ascontiguousarray(self.graph.indices, dtype=np.int32)
+                weights_np = np.ascontiguousarray(self.graph.weights, dtype=np.float32)
+                status = metal_dijkstra.set_graph_csr(indptr_np, indices_np, weights_np)
+                logger.info(f"[Metal] Graph loaded: {status}")
+                # Store on solver for use in pathfinding
+                self.solver.metal_solver = metal_dijkstra
+                self.solver.gpu_solver = None  # Ensure CUDA path doesn't fire
+                logger.info("[Metal] MetalDijkstra SSSP enabled on Apple Silicon")
+            except Exception as e:
+                logger.warning(f"[Metal] Failed to initialize Metal Dijkstra: {e}")
+                self.solver.metal_solver = None
+                self.solver.gpu_solver = None
         else:
             self.solver.gpu_solver = None
             reasons = []
@@ -2202,6 +2229,8 @@ class PathFinderRouter:
                 reasons.append("CuPy not installed")
             if not CUDA_DIJKSTRA_AVAILABLE:
                 reasons.append("CUDADijkstra import failed")
+            if not METAL_AVAILABLE:
+                reasons.append("orthoroute_mac not compiled")
             logger.info(f"[GPU] CPU-only mode: {', '.join(reasons)}")
         self.roi_extractor = ROIExtractor(self.graph, use_gpu=self.config.use_gpu and GPU_AVAILABLE, lattice=self.lattice)
 
