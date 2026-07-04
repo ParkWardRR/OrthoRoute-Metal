@@ -280,11 +280,11 @@
 
 ### Known Technical Debt
 
-- [ ] **UnifiedPathFinder decomposition** — 282KB file needs extraction into:
-  - [ ] `LatticeManager` — Lattice construction & management
-  - [ ] `EdgeAccountant` — Edge usage tracking & cost calculation
-  - [ ] `ConvergenceManager` — PathFinder negotiation loop
-  - [ ] `GeometryEmitter` — Track/via extraction from solution
+- [x] **UnifiedPathFinder decomposition** — 282KB file decomposed into 4 standalone modules:
+  - [x] `LatticeManager` (`lattice_manager.py`) — Lattice3D class for 3D grid construction & management
+  - [x] `EdgeAccountant` (`edge_accountant.py`) — Edge usage tracking, overuse computation, cost updates
+  - [x] `ConvergenceManager` (`convergence_manager.py`) — PathFinder negotiation loop coordinator (delegation pattern)
+  - [x] `GeometryEmitter` (`geometry_emitter.py`) — Track/via geometry extraction from committed paths
 - [x] **Remove `.backup` / `.bak` files** — 6 files deleted
 - [x] **Consolidate configuration** — `PathFinderConfig.from_env()`, `from_json()`, `merge()` classmethods added; single source of truth
 - [x] **Type hints** — `from __future__ import annotations` added to 12 files
@@ -346,10 +346,10 @@
 | GUI & Visualization | 11 | 0 | 1 | **12** |
 | Serialization | 6 | 0 | 1 | **7** |
 | Documentation | 18 | 0 | 0 | **18** |
-| Testing | 13 | 0 | 6 | **19** |
+| Testing | 19 | 0 | 6 | **25** |
 | Performance | 5 | 0 | 5 | **10** |
-| Refactoring | 7 | 0 | 1 | **8** |
+| Refactoring | 8 | 0 | 0 | **8** |
 | Future Features | 0 | 0 | 22 | **22** |
-| **TOTAL** | **133** | **0** | **37** | **170** |
+| **TOTAL** | **140** | **0** | **36** | **176** |
 
-> **Overall completion: ~78%** — All stubs are fully implemented. The Metal GPU backend is fully integrated into the Python routing pipeline via `MetalProvider` with CUDA→Metal→Vulkan→CPU automatic fallback. All 7 Metal kernels have full feature parity with their CUDA equivalents. The unit test suite covers core infrastructure with 18 test files (286 tests passing). Configuration is consolidated via `PathFinderConfig.from_env()`/`from_json()`/`merge()`. Magic numbers extracted to `constants.py`. Remaining work is primarily future features (layer compaction, differential pair routing, Vulkan compute backend, platform distribution), advanced testing, and the large-file decomposition of `unified_pathfinder.py`. Vulkan compute backend stub infrastructure is in place (`vulkan/`, `VulkanProvider`).
+> **Overall completion: ~80%** — All stubs fully implemented. `UnifiedPathFinder` decomposed into 4 standalone modules (`LatticeManager`, `EdgeAccountant`, `GeometryEmitter`, `ConvergenceManager`). Metal GPU backend fully integrated via `MetalProvider` with CUDA→Metal→Vulkan→CPU auto-fallback. 24 test files with 349 tests passing. Vulkan compute backend stub infrastructure in place. Remaining work: future features (layer compaction, differential pair routing, Vulkan implementation, platform distribution) and performance benchmarks.

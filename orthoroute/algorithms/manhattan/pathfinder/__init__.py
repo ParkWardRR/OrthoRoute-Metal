@@ -150,6 +150,22 @@ from .roi_extractor_mixin import RoiExtractorMixin
 from .geometry_mixin import GeometryMixin
 from .diagnostics_mixin import DiagnosticsMixin
 
+# Extracted standalone modules (from UnifiedPathFinder decomposition)
+from .lattice_manager import Lattice3D
+from .edge_accountant import EdgeAccountant
+from .geometry_emitter import GeometryEmitter
+from .convergence_manager import ConvergenceManager
+from .constants import (
+    ROUTING_MARGIN_MM,
+    DEFAULT_GRID_PITCH_MM,
+    EWMA_ALPHA,
+    PRESSURE_MULTIPLIER_DEFAULT,
+    DEFAULT_VIA_COST,
+    GPU_ROI_THRESHOLD,
+    DEFAULT_MAX_SEARCH_NODES,
+    MAX_ITERATIONS_DEFAULT,
+)
+
 # Note: UnifiedPathFinder is imported from parent module to avoid circular imports
 # Use: from orthoroute.algorithms.manhattan import UnifiedPathFinder
 
@@ -208,9 +224,25 @@ __all__ = [
     'RoiExtractorMixin',
     'GeometryMixin',
     'DiagnosticsMixin',
+
+    # Extracted standalone modules
+    'Lattice3D',
+    'EdgeAccountant',
+    'GeometryEmitter',
+    'ConvergenceManager',
+
+    # Named constants
+    'ROUTING_MARGIN_MM',
+    'DEFAULT_GRID_PITCH_MM',
+    'EWMA_ALPHA',
+    'PRESSURE_MULTIPLIER_DEFAULT',
+    'DEFAULT_VIA_COST',
+    'GPU_ROI_THRESHOLD',
+    'DEFAULT_MAX_SEARCH_NODES',
+    'MAX_ITERATIONS_DEFAULT',
 ]
 
-__version__ = "0.2.0"
+__version__ = "1.0.0"
 __author__ = "OrthoRoute Development Team"
 __doc__ = """
 PathFinder PCB Routing Engine - Modular Architecture
