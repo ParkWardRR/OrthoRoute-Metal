@@ -1216,6 +1216,8 @@ class Lattice3D:
         edge_count += via_edge_count
 
         logger.info(f"Pre-allocating for {edge_count:,} edges ({via_edge_count:,} via edges for {len(legal_via_pairs_set)} pairs)")
+        print(f"DEBUG: build_graph -> x_steps={self.x_steps}, y_steps={self.y_steps}, layers={self.layers}, bounds={self.bounds}")
+        logger.info(f"DEBUG: build_graph -> x_steps={self.x_steps}, y_steps={self.y_steps}, layers={self.layers}")
         graph = CSRGraph(use_gpu, edge_capacity=edge_count)
 
         # Build lateral edges (H/V discipline, exclude outer layers 0 and self.layers-1)

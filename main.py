@@ -752,6 +752,7 @@ def run_cli(board_file: str, output_dir: str = ".", config_path: Optional[str] =
             initialize_config(config_path)
 
         config = setup_environment()
+        logging.getLogger().setLevel(logging.INFO)
 
         # Load board
         logging.info(f"Loading board from: {board_file}")
@@ -796,7 +797,7 @@ def run_cli(board_file: str, output_dir: str = ".", config_path: Optional[str] =
             sys.exit(1)
 
     except Exception as e:
-        logging.error(f"CLI execution failed: {e}")
+        logging.error(f"CLI execution failed: {e}", exc_info=True)
         sys.exit(1)
 
 

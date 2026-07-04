@@ -1,6 +1,6 @@
 # OrthoRoute-Metal Integration Lessons
 
-These lessons were learned during the full integration of the CUDA2Metal-Graph framework into the OrthoRoute PCB autorouter.
+These lessons were learned during the full integration of the CUDA2Metal-Graph-Research framework into the OrthoRoute PCB autorouter.
 
 ## Python-Rust-Metal Integration
 

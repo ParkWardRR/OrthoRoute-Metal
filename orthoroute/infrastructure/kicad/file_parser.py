@@ -108,7 +108,7 @@ class KiCadFileParser:
         components = []
         
         # Find all footprint definitions
-        footprint_pattern = r'\(footprint\s+"([^"]+)"\s+(.*?)\n\s*\)'
+        footprint_pattern = r'\(footprint\s+"([^"]+)"\s+(.*?)\n  \)'
         
         for match in re.finditer(footprint_pattern, content, re.DOTALL):
             footprint_lib = match.group(1)
@@ -150,19 +150,19 @@ class KiCadFileParser:
                 component['layer'] = layer_match.group(1)
             
             # Extract pads
-            component['pads'] = self._extract_pads(footprint_content, component['reference'])
+            component['pads'] = self._extract_pads(footprint_content, component['reference'], component['x'], component['y'])
             
             if component['reference']:  # Only add if has reference
                 components.append(component)
         
         return components
     
-    def _extract_pads(self, footprint_content: str, component_ref: str) -> List[Dict[str, Any]]:
+    def _extract_pads(self, footprint_content: str, component_ref: str, comp_x: float = 0.0, comp_y: float = 0.0) -> List[Dict[str, Any]]:
         """Extract pad information from footprint."""
         pads = []
         
-        # Find all pad definitions
-        pad_pattern = r'\(pad\s+"([^"]+)"\s+(\w+)\s+(\w+)\s+(.*?)\)'
+        # Find all pads in footprint
+        pad_pattern = r'\(pad\s+"?([^"]+)"?\s+([\w_]+)\s+([\w_]+)\s+([^\n\r]*)'
         
         for match in re.finditer(pad_pattern, footprint_content, re.DOTALL):
             pad_number = match.group(1)
@@ -184,11 +184,11 @@ class KiCadFileParser:
                 'net_id': None
             }
             
-            # Extract position
+            # Extract relative position
             pos_match = re.search(r'\(at\s+([\d.-]+)\s+([\d.-]+)', pad_details)
             if pos_match:
-                pad['x'] = float(pos_match.group(1))
-                pad['y'] = float(pos_match.group(2))
+                pad['x'] = float(pos_match.group(1)) + comp_x
+                pad['y'] = float(pos_match.group(2)) + comp_y
             
             # Extract size
             size_match = re.search(r'\(size\s+([\d.-]+)\s+([\d.-]+)', pad_details)
@@ -208,6 +208,8 @@ class KiCadFileParser:
             
             # Extract net
             net_match = re.search(r'\(net\s+(\d+)\s+"([^"]*)"', pad_details)
+            print("pad_details:", repr(pad_details))
+            print("net_match:", net_match)
             if net_match:
                 net_code = int(net_match.group(1))
                 if net_code > 0:  # Skip unconnected (net 0)

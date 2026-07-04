@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `test_regression.py` — CSR integrity, usage monotonicity
   - `test_benchmarks.py` — Timing assertions for critical paths
 - **Linux Vulkan compute backend stubs** (`vulkan/`, `VulkanProvider`)
+- **F5 Turbo v2 demo board generator** (`f5_turbo_generator/`):
+  - Go-based PCB placer (`cmd/place_f5_turbo.go`) — parses SKiDL `.net` netlists, generates valid `.kicad_pcb` with silkscreen outlines, fab layer, courtyard, pin-1 markers, ref designators, and value text
+  - SKiDL schematic capture (`generate_netlists.py`, `components.py`) — 44-component Class-A power amplifier with 20 nets
+  - Replaces legacy Python placer that was missing component outlines and silently skipping half of nets
 - **GitHub Release v1.0.0** with SEO metadata
 - **Apple Metal GPU backend** — Complete replacement of CUDA/CuPy with native Metal Shading Language (MSL) compute kernels for Apple Silicon (M1/M2/M3/M4).
 - **Persistent thread SPFA solver** (`wavefront_expand_all`) — Single-dispatch, work-stealing shortest-path kernel that runs entirely on-GPU without CPU round-trips.

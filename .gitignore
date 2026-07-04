@@ -185,3 +185,14 @@ Cargo.lock
 # macOS
 .DS_Store
 **/.DS_Store
+
+# f5_turbo_generator
+f5_turbo_generator/place_f5_turbo
+f5_turbo_generator/*_python.kicad_pcb
+f5_turbo_generator/*_go.kicad_pcb
+f5_turbo_generator/*.svg
+f5_turbo_generator/*.erc
+f5_turbo_generator/*.prl
+f5_turbo_generator/logs/
+f5_turbo_generator/kicad-symbols/
+test_plugin_env/

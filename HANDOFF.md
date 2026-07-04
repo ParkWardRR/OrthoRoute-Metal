@@ -1,7 +1,7 @@
 # OrthoRoute-Metal Handoff Document
 
 **Project:** [ParkWardRR/OrthoRoute-Metal](https://github.com/ParkWardRR/OrthoRoute-Metal)
-**Parent Framework:** [ParkWardRR/CUDA2Metal-Graph](https://github.com/ParkWardRR/CUDA2Metal-Graph)
+**Parent Framework:** [ParkWardRR/CUDA2Metal-Graph-Research](https://github.com/ParkWardRR/CUDA2Metal-Graph-Research)
 **Version:** 1.0.0
 **Date:** 2026-07-04
 **Status:** Production release, 80% roadmap complete
@@ -10,7 +10,7 @@
 
 ## What This Project Is
 
-OrthoRoute-Metal is a GPU-accelerated PCB autorouter that runs on Apple Silicon. It is the primary case study for the CUDA2Metal-Graph framework -- a real-world application that was ported from NVIDIA CUDA/CuPy to Apple Metal compute shaders.
+OrthoRoute-Metal is a GPU-accelerated PCB autorouter that runs on Apple Silicon. It is the primary case study for the CUDA2Metal-Graph-Research framework -- a real-world application that was ported from NVIDIA CUDA/CuPy to Apple Metal compute shaders.
 
 The autorouter converts a KiCad PCB design into a 3D lattice graph, then uses the PathFinder negotiated congestion algorithm with GPU-accelerated shortest-path solvers to find conflict-free copper routing for all nets simultaneously.
 
@@ -48,6 +48,13 @@ OrthoRoute-Metal/
   tests/                          # 29 test files, 529 tests
   docs/                           # 14 documentation files
   ci/                             # Local CI scripts (OrbStack)
+  f5_turbo_generator/             # F5 Turbo v2 demo board generator
+    cmd/place_f5_turbo.go         # Go PCB placer (netlist → .kicad_pcb)
+    generate_netlists.py          # SKiDL schematic → .net netlist
+    components.py                 # SKiDL component definitions
+    f5_turbo_v2.net               # Generated netlist (44 comps, 20 nets)
+    f5_turbo_v2.kicad_pcb         # Generated board layout
+    README.md                     # Generator documentation
 ```
 
 ---
@@ -190,9 +197,9 @@ python main.py --gui path/to/board.kicad_pcb
 
 ---
 
-## Relationship to CUDA2Metal-Graph
+## Relationship to CUDA2Metal-Graph-Research
 
-OrthoRoute-Metal is **Case Study #1** for the CUDA2Metal-Graph framework (Phase 5 of the parent roadmap). The translation patterns, Rust runtime architecture, and Metal kernel primitives developed here are documented back in the parent repo:
+OrthoRoute-Metal is **Case Study #1** for the CUDA2Metal-Graph-Research framework (Phase 5 of the parent roadmap). The translation patterns, Rust runtime architecture, and Metal kernel primitives developed here are documented back in the parent repo:
 
 - `CUDA_TO_MSL_MAPPING.md` -- Atomic, barrier, memory space mappings
 - `docs/translation_patterns.md` -- High-level CUDA-to-Metal patterns

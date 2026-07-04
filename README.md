@@ -230,6 +230,28 @@ final_distances = dijkstra.get_distances()
 final_predecessors = dijkstra.get_predecessors()
 ```
 
+### CLI Routing
+
+```bash
+# Route a .kicad_pcb file from the command line
+python main.py cli board.kicad_pcb -o board_routed.kicad_pcb
+```
+
+### Demo Board: F5 Turbo v2
+
+The `f5_turbo_generator/` directory contains a complete demo board — a 44-component
+Class-A power amplifier. A Go-based placer generates the `.kicad_pcb` from a SKiDL netlist:
+
+```bash
+cd f5_turbo_generator
+go build -o place_f5_turbo cmd/place_f5_turbo.go
+./place_f5_turbo                    # → f5_turbo_v2.kicad_pcb
+kicad-cli pcb export pdf f5_turbo_v2.kicad_pcb -o f5_turbo_v2.pdf \
+  --layers F.Cu,B.Cu,F.SilkS,F.Fab,Edge.Cuts --mode-single
+```
+
+See [f5_turbo_generator/README.md](f5_turbo_generator/README.md) for details.
+
 ### Headless / Cloud Mode
 
 OrthoRoute supports headless routing via `.ORP` export files. See the upstream
@@ -390,6 +412,7 @@ A software grid barrier using `device atomic_uint` and `threadgroup_barrier(mem_
 | [plugin_manager_integration.md](docs/plugin_manager_integration.md) | KiCad PCM integration |
 | [ORP_ORS_file_formats.md](docs/ORP_ORS_file_formats.md) | File format specification |
 | [CHANGELOG.md](CHANGELOG.md) | Version history |
+| [f5_turbo_generator/README.md](f5_turbo_generator/README.md) | Demo board generator (Go) |
 | [NOTICE.md](NOTICE.md) | Upstream attribution and license |
 | [Upstream OrthoRoute](https://github.com/bbenchoff/OrthoRoute) | Original CUDA-based OrthoRoute |
 
