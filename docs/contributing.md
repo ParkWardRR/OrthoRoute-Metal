@@ -89,29 +89,22 @@ Don't try to refactor the entire 3,936-line UnifiedPathFinder on your first PR. 
 
 ### 2. **Areas That Need Help**
 
-#### **Critical Priority: Tests**
-The project has **zero unit tests**. This is the biggest blocker to refactoring.
+#### **Testing: Extending the Test Suite**
+The project has a comprehensive test suite with **286 tests across 18 files**. Run with:
 
-**Start here:**
-```python
-# tests/test_lattice_builder.py
-def test_lattice_node_count():
-    """Verify lattice creates correct number of nodes"""
-    builder = LatticeBuilder(Nx=10, Ny=10, Nz=6)
-    lattice = builder.build()
-    assert lattice.num_nodes == 10 * 10 * 6
-
-def test_manhattan_adjacency():
-    """Verify no diagonal edges in graph"""
-    # Check that all edges connect orthogonally
+```bash
+python -m pytest tests/ -v
 ```
 
-**What to test:**
-- Lattice building (node count, adjacency)
-- CSR matrix construction (integrity checks)
-- Via pooling accounting (usage counts)
-- Portal escape planning (DRC compliance)
-- Pad mapping (nearest node finding)
+**Tests that still need work:**
+- PathFinder convergence tests (known-good boards with expected outcomes)
+- GPU/CPU parity tests (automated comparison of Metal, CUDA, and CPU paths)
+- Regression test suite (prevent regressions across routing quality metrics)
+- Performance benchmarks (automated timing comparison against baselines)
+
+**Existing coverage (see `tests/`):**
+- Lattice building, CSR integrity, via accounting, portal escape, pad mapping
+- Domain models, config, data structures, spatial hash, DRC, serialization
 
 #### **High Priority: Refactoring**
 

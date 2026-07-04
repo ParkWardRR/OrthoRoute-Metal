@@ -286,10 +286,10 @@
   - [ ] `ConvergenceManager` — PathFinder negotiation loop
   - [ ] `GeometryEmitter` — Track/via extraction from solution
 - [x] **Remove `.backup` / `.bak` files** — 6 files deleted
-- [ ] **Consolidate configuration** — Currently scattered across `orthoroute.json`, `PathFinderConfig`, env vars, and CLI args
+- [x] **Consolidate configuration** — `PathFinderConfig.from_env()`, `from_json()`, `merge()` classmethods added; single source of truth
 - [x] **Type hints** — `from __future__ import annotations` added to 12 files
 - [x] **Remove commented-out code** — ~300 lines removed
-- [ ] **Extract magic numbers** — Named constants for tuning params (alpha=0.6, multiplier=1.25, etc.)
+- [x] **Extract magic numbers** — `constants.py` with named constants (EWMA_ALPHA, PRESSURE_MULTIPLIER, GPU_ROI_THRESHOLD, etc.)
 - [x] **Fix `hasattr()` fragility** — 15 patterns replaced with proper state management
 - [x] **Version consistency** — All packages aligned to v1.0.0 (`__init__.py`, `setup.py`, `Cargo.toml`)
 
@@ -338,8 +338,8 @@
 | Documentation | 18 | 0 | 0 | **18** |
 | Testing | 13 | 0 | 6 | **19** |
 | Performance | 5 | 0 | 5 | **10** |
-| Refactoring | 5 | 0 | 3 | **8** |
+| Refactoring | 7 | 0 | 1 | **8** |
 | Future Features | 0 | 0 | 17 | **17** |
-| **TOTAL** | **131** | **0** | **34** | **165** |
+| **TOTAL** | **133** | **0** | **32** | **165** |
 
-> **Overall completion: ~79%** — The Metal GPU backend is fully integrated into the Python routing pipeline via `MetalProvider` with CUDA→Metal→CPU automatic fallback. All 7 Metal kernels have full feature parity with their CUDA equivalents. The unit test suite covers core infrastructure with 15+ test files. Remaining work is primarily future features (layer compaction, differential pair routing, platform distribution) and advanced testing (convergence, regression, performance benchmarks).
+> **Overall completion: ~81%** — All stubs are fully implemented. The Metal GPU backend is fully integrated into the Python routing pipeline via `MetalProvider` with CUDA→Metal→CPU automatic fallback. All 7 Metal kernels have full feature parity with their CUDA equivalents. The unit test suite covers core infrastructure with 18 test files (286 tests passing). Configuration is consolidated via `PathFinderConfig.from_env()`/`from_json()`/`merge()`. Magic numbers extracted to `constants.py`. Remaining work is primarily future features (layer compaction, differential pair routing, platform distribution), advanced testing, and the large-file decomposition of `unified_pathfinder.py`.

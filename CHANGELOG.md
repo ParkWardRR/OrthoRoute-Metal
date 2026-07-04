@@ -19,17 +19,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Multi-net parallel solver** (`wavefront_expand_multi`) — Simultaneous routing of multiple nets using batched distance arrays with 2D grid dispatch.
 - **PathFinder negotiation kernel** — SIMD-group reduction for history-based congestion pressure using `simd_shuffle_down`.
 - **SPFA setup kernel** — GPU-accelerated frontier initialization from distance arrays.
-- **ROI extractor kernel** — GPU-side region-of-interest distance extraction.
-- **Via processing kernel** — GPU-side via cost initialization.
+- **ROI extractor kernel** — Full GPU-side region-of-interest extraction with 3D bounding box, coordinate filtering, and atomic compaction.
+- **Via processing kernel** — GPU-side via cost computation with hard-block (usage ≥ capacity → ∞) and pooling penalties.
 - **Rust/PyO3 bridge** (`orthoroute_metal`) — `MetalDijkstra` struct with full pipeline management, buffer allocation, and Python interop.
+- **MetalProvider** — Full `GPUProvider` interface wrapping `orthoroute_mac.MetalDijkstra`, with CUDA→Metal→CPU automatic fallback in routing pipeline.
+- **`extract_roi()`** — Full Metal kernel dispatch with ROI bounds, coordinate arrays, returns filtered distances and node IDs as NumPy arrays.
+- **`process_vias()`** — Full Metal kernel dispatch with capacity/usage arrays and base cost, returns computed via costs.
+- **`extract_roi_subgraph()`** — Metal kernel returning full CSR subgraph (indptr, indices, weights) for ROI nodes.
 - **36/36 parity tests pass** — Bitwise float32 match against CUDA golden tensors across all tested graph sizes (2K–180K nodes).
 - **Peak throughput: 111.4 billion edges/sec** on Apple M4 at 401,800 nodes.
-- Comprehensive documentation: `ARCHITECTURE.md`, `BENCHMARK_METHODOLOGY.md`, `NOTICE.md`.
+- **GUI: Route selected nets** — `_route_selected_nets()` with rollback support for selective net routing.
+- **GUI: Clear routes** — `_clear_routes()` with full PathFinder state reset (ownership, predecessors, distances, cost arrays).
+- **GUI: Rollback route** — `_rollback_route()` with deep-copy snapshot restore.
+- **GUI: Congestion heatmap** — Green→yellow→red density grid overlay for real-time congestion visualization.
+- **Checkpoint resume** — `--resume-checkpoint` loads ORS file, recovers iteration count, restores PathFinder state.
+- **Progress webhooks** — `--webhook-url` flag for non-blocking POST notifications of routing progress.
+- **Test suite** — 18 test files, 286 tests covering lattice, CSR, via accounting, portal escape, pad mapping, GPU/CPU parity, performance, convergence, and all domain models.
+- **Named constants** — `constants.py` with EWMA_ALPHA, PRESSURE_MULTIPLIER, GPU_ROI_THRESHOLD, and other tuning parameters.
+- **Config consolidation** — `PathFinderConfig.from_env()`, `from_json()`, `merge()` classmethods for single source of truth.
+- **Local CI pipeline** — `ci/run.sh` + Dockerfile for OrbStack-based local CI.
+- Comprehensive documentation: `ARCHITECTURE.md`, `BENCHMARK_METHODOLOGY.md`, `api_reference.md`, `pathfinder_algorithm.md`, `metal_kernel_internals.md`, `coordinate_system.md`, `NOTICE.md`.
 
 ### Changed
 
-- README cleaned up with updated badges, benchmarks, and architecture diagrams.
+- README updated to v1.0.0 with full Metal integration, testing section, local CI section, expanded documentation table.
 - Build system migrated to `maturin` for Rust→Python extension builds.
+- `.gitignore` fixed to track `tests/` directory (was previously excluded).
+- Type hints added to 12 files with `from __future__ import annotations`.
+- ~300 lines of dead commented-out code removed.
+- 15 `hasattr()` fragility patterns replaced with proper state management.
+- Version aligned to 1.0.0 across `__init__.py`, `setup.py`, and `Cargo.toml`.
+- 6 `.backup`/`.bak` files deleted.
 
 ## [0.2.0] - 2025
 

@@ -255,7 +255,7 @@ orthoroute_metal.amx_sgemm_py(
 
 ## Testing
 
-OrthoRoute-Metal includes a comprehensive test suite with 15+ test files covering core infrastructure, domain models, and GPU backend integration.
+OrthoRoute-Metal includes a comprehensive test suite with 18 test files and **286 tests** covering core infrastructure, domain models, and GPU backend integration.
 
 ### Run all tests
 
@@ -272,13 +272,19 @@ python -m pytest tests/ -v
 | Via pooling accounting | `test_via_accounting.py` |
 | Board/layer analysis | `test_board_analyzer.py`, `test_layer_analyzer.py` |
 | Domain models | `test_domain_models.py` |
-| DRC constraints | `test_drc.py` |
+| DRC constraints | `test_drc_checker.py` |
 | Serialization (ORP/ORS) | `test_serialization.py` |
 | CPU fallback | `test_cpu_fallback.py` |
 | Configuration | `test_config.py` |
 | Spatial hash | `test_spatial_hash.py` |
 | Grid/real global grid | `test_grid.py`, `test_real_global_grid.py` |
 | Data structures | `test_data_structures.py` |
+| Parameter derivation | `test_parameter_derivation.py` |
+| Portal escape | `test_portal_escape.py` |
+| Pad mapping | `test_pad_mapping.py` |
+| GPU/CPU parity | `test_gpu_cpu_parity.py` |
+| Performance benchmarks | `test_performance.py` |
+| Convergence | `test_convergence.py` |
 | CUDA ↔ Metal parity | 36/36 golden tensor tests |
 
 ---

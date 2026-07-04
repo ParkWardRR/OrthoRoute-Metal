@@ -919,7 +919,7 @@ A: Check tmux session or log files. Or set up email notification (advanced).
 A: Vast.ai stops instance, routing lost. Add credits before starting.
 
 **Q: Can I pause and resume?**
-A: Not currently. Checkpointing is a planned feature but not implemented.
+A: Yes. Use `--checkpoint-interval 30` to save every 30 minutes, then resume with `--resume-checkpoint path/to/checkpoint.ORS`.
 
 **Q: GPU seems idle during routing?**
 A: Check nvidia-smi. If 0%, CuPy isn't working. Use `--cpu-only` as fallback.
