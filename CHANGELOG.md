@@ -5,10 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - Unreleased
+## [1.0.0] - 2026-07-04
 
 ### Added
 
+- **Phase 4: SIMD Prefix-Sum Queue Compaction** in `wavefront_expand_all` kernel
+  - `simd_enqueue()` utility reduces global queue atomic contention by 32×
+  - Bucket-deferred nodes now batched via `simd_prefix_exclusive_sum`
+- **UnifiedPathFinder decomposition** into 4 standalone modules:
+  - `LatticeManager` (`lattice_manager.py`) — 3D grid construction
+  - `EdgeAccountant` (`edge_accountant.py`) — Edge usage tracking & cost updates
+  - `GeometryEmitter` (`geometry_emitter.py`) — Track/via geometry extraction
+  - `ConvergenceManager` (`convergence_manager.py`) — Negotiation loop coordinator
+- **Comprehensive KiCad integration test suite** (180 new tests):
+  - `test_kicad_e2e.py` — Full pipeline board→geometry→serialization
+  - `test_kicad_file_parser.py` — S-expression parsing & board construction
+  - `test_kicad_geometry.py` — Coordinate transforms & edge validation
+  - `test_kicad_serialization.py` — ORP/ORS round-trip with compression
+  - `test_kicad_layers.py` — Layer normalization, regex, color schemes
+- **Advanced test suites** (64 tests):
+  - `test_portal_escape_advanced.py` — DRC clearance, determinism
+  - `test_pad_mapping_advanced.py` — Nearest node, multi-layer mapping
+  - `test_pathfinder_convergence.py` — Pressure escalation, stagnation
+  - `test_gpu_cpu_parity_advanced.py` — Dijkstra correctness, provider factory
+  - `test_regression.py` — CSR integrity, usage monotonicity
+  - `test_benchmarks.py` — Timing assertions for critical paths
+- **Linux Vulkan compute backend stubs** (`vulkan/`, `VulkanProvider`)
+- **GitHub Release v1.0.0** with SEO metadata
 - **Apple Metal GPU backend** — Complete replacement of CUDA/CuPy with native Metal Shading Language (MSL) compute kernels for Apple Silicon (M1/M2/M3/M4).
 - **Persistent thread SPFA solver** (`wavefront_expand_all`) — Single-dispatch, work-stealing shortest-path kernel that runs entirely on-GPU without CPU round-trips.
 - **Delta-stepping with bucket frontier** — Partitions the frontier by distance to exploit L1/L2 cache locality; converts from DRAM-bandwidth-bound to cache-bound.
@@ -34,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **GUI: Congestion heatmap** — Green→yellow→red density grid overlay for real-time congestion visualization.
 - **Checkpoint resume** — `--resume-checkpoint` loads ORS file, recovers iteration count, restores PathFinder state.
 - **Progress webhooks** — `--webhook-url` flag for non-blocking POST notifications of routing progress.
-- **Test suite** — 18 test files, 286 tests covering lattice, CSR, via accounting, portal escape, pad mapping, GPU/CPU parity, performance, convergence, and all domain models.
+- **Test suite** — 29 test files, 529 tests covering lattice, CSR, via accounting, portal escape, pad mapping, GPU/CPU parity, performance, convergence, KiCad integration, and all domain models.
 - **Named constants** — `constants.py` with EWMA_ALPHA, PRESSURE_MULTIPLIER, GPU_ROI_THRESHOLD, and other tuning parameters.
 - **Config consolidation** — `PathFinderConfig.from_env()`, `from_json()`, `merge()` classmethods for single source of truth.
 - **Local CI pipeline** — `ci/run.sh` + Dockerfile for OrbStack-based local CI.
@@ -42,6 +65,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Version bumped to 1.0.0 across all packages.
+- Pathfinder package exports now include extracted modules (`LatticeManager`, `EdgeAccountant`, `GeometryEmitter`, `ConvergenceManager`).
+- ROADMAP updated to 80% completion (140/176 items).
+- Refactoring: 8/8 complete (was 7/8).
+- Testing: 29 test files, 529 tests (was 18 files, 286 tests).
 - README updated to v1.0.0 with full Metal integration, testing section, local CI section, expanded documentation table.
 - Build system migrated to `maturin` for Rust→Python extension builds.
 - `.gitignore` fixed to track `tests/` directory (was previously excluded).
@@ -50,6 +78,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 15 `hasattr()` fragility patterns replaced with proper state management.
 - Version aligned to 1.0.0 across `__init__.py`, `setup.py`, and `Cargo.toml`.
 - 6 `.backup`/`.bak` files deleted.
+
+### Fixed
+
+- `datetime.utcnow()` deprecation warnings in serialization exporters.
 
 ## [0.2.0] - 2025
 

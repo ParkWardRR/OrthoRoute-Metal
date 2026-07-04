@@ -15,7 +15,7 @@
 
 **OrthoRoute-Metal** is a native Apple Metal GPU backend for [OrthoRoute](https://github.com/bbenchoff/OrthoRoute), the GPU-accelerated PCB autorouter for KiCad. This fork replaces the CUDA/CuPy dependency with Apple Metal Shading Language (MSL) compute kernels, enabling GPU-accelerated PCB routing on Apple Silicon (M1, M2, M3, M4) without any NVIDIA hardware.
 
-The Metal backend is **fully integrated** into the Python routing pipeline via `MetalProvider`, with automatic CUDA→Metal→CPU fallback. All 7 Metal compute kernels have full feature parity with their CUDA equivalents, verified by 36/36 bitwise-identical parity tests.
+The Metal backend is **fully integrated** into the Python routing pipeline via `MetalProvider`, with automatic CUDA→Metal→Vulkan→CPU fallback. All 7 Metal compute kernels have full feature parity with their CUDA equivalents, verified by 36/36 bitwise-identical parity tests.
 
 > Based on [OrthoRoute](https://github.com/bbenchoff/OrthoRoute) by [Brian Benchoff](https://github.com/bbenchoff), licensed under MIT. See [NOTICE.md](NOTICE.md) for full attribution.
 
@@ -51,6 +51,7 @@ This fork adds a complete Apple Metal GPU compute backend to OrthoRoute. The Met
 - **AMX Coprocessor Offloading** -- Dense matrix operations (congestion map updates) are routed to Apple's AMX matrix coprocessors via the Accelerate framework `cblas_sgemm`.
 - **Multi-Net Parallel Solver** -- A second kernel (`wavefront_expand_multi`) supports simultaneous routing of multiple nets using batched distance arrays.
 - **PathFinder Negotiation Kernel** -- SIMD-group reduction for history-based congestion pressure, using `simd_shuffle_down` for efficient warp-level summation.
+- **SIMD Prefix-Sum Queue Compaction** -- `simd_enqueue()` utility batches bucket-deferred node enqueues via `simd_prefix_exclusive_sum`, reducing global queue atomic contention by up to 32×.
 
 ---
 
@@ -128,16 +129,17 @@ The Class A Amplifier board routes in 26 seconds on the M4 with the following re
 Python (KiCad / CLI)           Rust (PyO3)              Metal GPU
 +------------------+    +---------------------+    +-------------------+
 | MetalProvider    | -> | MetalDijkstra       | -> | wavefront_expand  |
-| UnifiedPathFinder|    | Buffer management   |    | SPFA + Delta-Step |
-| Net ordering     |    | Pipeline caching    |    | Grid barrier      |
-+------------------+    | AMX SGEMM (Accel.)  |    | SIMD block steal  |
-        |               +---------------------+    +-------------------+
+| LatticeManager   |    | Buffer management   |    | SPFA + Delta-Step |
+| EdgeAccountant   |    | Pipeline caching    |    | Grid barrier      |
+| GeometryEmitter  |    | AMX SGEMM (Accel.)  |    | SIMD block steal  |
+| ConvergenceManager    +---------------------+    | SIMD prefix-sum   |
++------------------+                               +-------------------+
         |                        |                          |
-  CUDA -> Metal -> CPU           +--- UMA (zero-copy) -----+
+  CUDA -> Metal -> Vulkan -> CPU +--- UMA (zero-copy) -----+
   (auto-fallback)
 ```
 
-The `MetalProvider` in `orthoroute/infrastructure/gpu/metal_provider.py` implements the `GPUProvider` interface and is automatically selected via `get_best_provider()` with CUDA→Metal→CPU priority. It wraps the Rust/PyO3 `MetalDijkstra` backend for shortest-path dispatch, ROI extraction, and via cost computation.
+The `MetalProvider` in `orthoroute/infrastructure/gpu/metal_provider.py` implements the `GPUProvider` interface and is automatically selected via `get_best_provider()` with CUDA→Metal→Vulkan→CPU priority. It wraps the Rust/PyO3 `MetalDijkstra` backend for shortest-path dispatch, ROI extraction, and via cost computation. The `UnifiedPathFinder` has been decomposed into 4 standalone modules: `LatticeManager`, `EdgeAccountant`, `GeometryEmitter`, and `ConvergenceManager`.
 
 For a detailed architecture description, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -255,12 +257,13 @@ orthoroute_metal.amx_sgemm_py(
 
 ## Testing
 
-OrthoRoute-Metal includes a comprehensive test suite with 18 test files and **286 tests** covering core infrastructure, domain models, and GPU backend integration.
+OrthoRoute-Metal includes a comprehensive test suite with 29 test files and **529 tests** (13 skipped — Qt) covering core infrastructure, domain models, GPU backend integration, and KiCad integration.
 
 ### Run all tests
 
 ```bash
 python -m pytest tests/ -v
+# 529 passed, 13 skipped in 0.76s
 ```
 
 ### Test coverage includes
@@ -280,11 +283,17 @@ python -m pytest tests/ -v
 | Grid/real global grid | `test_grid.py`, `test_real_global_grid.py` |
 | Data structures | `test_data_structures.py` |
 | Parameter derivation | `test_parameter_derivation.py` |
-| Portal escape | `test_portal_escape.py` |
-| Pad mapping | `test_pad_mapping.py` |
-| GPU/CPU parity | `test_gpu_cpu_parity.py` |
-| Performance benchmarks | `test_performance.py` |
-| Convergence | `test_convergence.py` |
+| Portal escape | `test_portal_escape.py`, `test_portal_escape_advanced.py` |
+| Pad mapping | `test_pad_mapping.py`, `test_pad_mapping_advanced.py` |
+| GPU/CPU parity | `test_gpu_cpu_parity.py`, `test_gpu_cpu_parity_advanced.py` |
+| PathFinder convergence | `test_convergence.py`, `test_pathfinder_convergence.py` |
+| Performance benchmarks | `test_performance.py`, `test_benchmarks.py` |
+| Regression suite | `test_regression.py` |
+| KiCad end-to-end | `test_kicad_e2e.py` |
+| KiCad file parsing | `test_kicad_file_parser.py` |
+| KiCad geometry | `test_kicad_geometry.py` |
+| KiCad serialization | `test_kicad_serialization.py` |
+| KiCad layers/colors | `test_kicad_layers.py` |
 | CUDA ↔ Metal parity | 36/36 golden tensor tests |
 
 ---

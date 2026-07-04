@@ -10,6 +10,8 @@ Apple Metal compute pipeline. The architecture has three layers:
 |  Python (KiCad Plugin / CLI)                            |
 |  - Board parsing, net ordering, PathFinder iteration    |
 |  - NumPy arrays for graph data (CSR format)             |
+|  - LatticeManager, EdgeAccountant, GeometryEmitter,     |
+|    ConvergenceManager (decomposed from UnifiedPathFinder)|
 +---------------------------------------------------------+
          |                              ^
          | PyO3 FFI (zero-copy)         | Results (zero-copy)
@@ -73,9 +75,10 @@ The main SSSP solver (`wavefront_expand_all`) uses a persistent thread model:
 1. A fixed grid of 8,192 threads (16 threadgroups of 512) is launched once.
 2. Threads cooperatively process a work-stealing frontier queue.
 3. Each SIMD-group steals 32 work items at a time to minimize atomic contention.
-4. A software grid barrier synchronizes all threadgroups between iterations.
-5. The kernel runs until the frontier is empty or the iteration limit is reached.
-6. All iterations execute inside a single `commandBuffer.commit()` call.
+4. SIMD prefix-sum queue compaction batches deferred node enqueues (`simd_enqueue`).
+5. A software grid barrier synchronizes all threadgroups between iterations.
+6. The kernel runs until the frontier is empty or the iteration limit is reached.
+7. All iterations execute inside a single `commandBuffer.commit()` call.
 
 ### AMX Coprocessor Offloading
 
@@ -95,6 +98,19 @@ metal/
     kernels.metal     -- All Metal Shading Language compute kernels
     accelerate_ops.rs -- Apple Accelerate/AMX SGEMM bindings
 ```
+
+### PathFinder Module Decomposition
+
+The `UnifiedPathFinder` (formerly a 282KB monolith) has been decomposed into 4 standalone modules:
+
+| Module | File | Responsibility |
+|--------|------|----------------|
+| `LatticeManager` | `lattice_manager.py` | 3D grid construction & management (Lattice3D) |
+| `EdgeAccountant` | `edge_accountant.py` | Edge usage tracking, overuse computation, cost updates |
+| `GeometryEmitter` | `geometry_emitter.py` | Track/via geometry extraction from committed paths |
+| `ConvergenceManager` | `convergence_manager.py` | PathFinder negotiation loop coordinator (delegation pattern) |
+
+Each module is independently testable and exported from the pathfinder package.
 
 ## Key Design Decisions
 
@@ -116,4 +132,6 @@ grid barrier eliminates this entirely.
 
 With 8,192 threads contending on a single atomic queue index, per-thread
 atomics create severe serialization. SIMD block stealing (32 items per atomic
-operation) reduces contention by 32x.
+operation) reduces contention by 32x. Combined with **SIMD prefix-sum queue
+compaction** on the write side (`simd_enqueue()`), both reading from and
+writing to the frontier queue are batched at the SIMD-group level.

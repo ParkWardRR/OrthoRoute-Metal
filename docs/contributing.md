@@ -13,9 +13,9 @@ I swear to fucking god there is never going to be a discord or slack for this sh
 - Blind/buried via support (870 via pairs)
 
 **What needs work:**
-- ⚠️ No unit tests
-- ⚠️ Large files (3,936-line UnifiedPathFinder class)
-- ⚠️ Configuration scattered across multiple places
+- ⬜ 3D layer stack viewer
+- ⬜ M1/M2/M3 benchmarks
+- ⬜ Vulkan compute backend implementation
 
 If you're okay working on code with rough edges but interesting algorithms, read on.
 
@@ -63,7 +63,7 @@ OrthoRoute/
 │   └── presentation/              # GUI and CLI
 ├── main.py                        # Entry point
 ├── docs/                          # Documentation
-└── tests/                         # Tests (currently empty - hint hint)
+└── tests/                         # 29 test files, 529 tests
 ```
 
 ---
@@ -72,7 +72,7 @@ OrthoRoute/
 
 ### 1. **Start Small**
 
-Don't try to refactor the entire 3,936-line UnifiedPathFinder on your first PR. Pick something focused:
+Don't try to refactor the entire codebase on your first PR. Pick something focused:
 
 **Good first contributions:**
 - Add unit tests for lattice building
@@ -82,69 +82,46 @@ Don't try to refactor the entire 3,936-line UnifiedPathFinder on your first PR. 
 - Write examples for the README
 
 **More involved:**
-- Extract classes from UnifiedPathFinder
-- Implement KiCad geometry export
-- Add integration tests
-- Fix convergence oscillation
+- Implement Vulkan compute backend
+- Add 3D layer stack viewer
+- Extend KiCad integration tests
+- Add M1/M2/M3 benchmark comparisons
 
 ### 2. **Areas That Need Help**
 
 #### **Testing: Extending the Test Suite**
-The project has a comprehensive test suite with **286 tests across 18 files**. Run with:
+The project has a comprehensive test suite with **529 tests across 29 files** (13 skipped — Qt). Run with:
 
 ```bash
 python -m pytest tests/ -v
+# 529 passed, 13 skipped in 0.76s
 ```
 
-**Tests that still need work:**
-- PathFinder convergence tests (known-good boards with expected outcomes)
-- GPU/CPU parity tests (automated comparison of Metal, CUDA, and CPU paths)
-- Regression test suite (prevent regressions across routing quality metrics)
-- Performance benchmarks (automated timing comparison against baselines)
-
-**Existing coverage (see `tests/`):**
+**Areas with coverage:**
 - Lattice building, CSR integrity, via accounting, portal escape, pad mapping
 - Domain models, config, data structures, spatial hash, DRC, serialization
+- GPU/CPU parity, PathFinder convergence, regression, performance benchmarks
+- KiCad end-to-end, file parsing, geometry, serialization, layers/colors
 
-#### **High Priority: Refactoring**
+**Tests that could benefit from expansion:**
+- Multi-board regression testing (different board sizes and complexities)
+- Vulkan backend tests (when implemented)
+- M1/M2/M3 parity tests
 
-The `unified_pathfinder.py` file is 3,936 lines. It needs to be broken up:
+#### **High Priority: Vulkan Backend**
 
-**Extraction candidates:**
-```python
-# Current: Everything in UnifiedPathFinder
-# Target: Separate classes
+Stub infrastructure exists in `vulkan/` with `VulkanProvider`. Implementation needed:
 
-class LatticeManager:
-    """Builds and manages the 3D routing lattice"""
-
-class EdgeAccountant:
-    """Tracks edge usage and calculates costs"""
-    # (This actually exists but needs cleanup)
-
-class ConvergenceManager:
-    """Handles PathFinder negotiation loop"""
-
-class GeometryEmitter:
-    """Extracts tracks and vias from routing solution"""
-```
+- SPIR-V compute shaders for all 7 kernels
+- ash/vulkano Rust bindings with PyO3 bridge
+- Linux GPU auto-detection
 
 #### **Medium Priority: Documentation**
 
-**What's missing:**
-- API documentation (Sphinx or similar)
-- Coordinate system explanation (how (x,y,z) maps to mm and layers)
-- PathFinder algorithm overview (it's complex)
-- Architecture diagrams (Clean Architecture layers)
-- GPU kernel documentation (CUDA code needs explanation)
-
-#### **Lower Priority: Code Quality**
-
-- Add type hints everywhere
-- Remove commented-out code
-- Consolidate configuration (currently in 4 places)
-- Fix `hasattr()` fragility (better state management)
-- Extract magic numbers to named constants
+**What could be improved:**
+- API documentation (auto-generated from docstrings)
+- Architecture diagrams (visual Clean Architecture layers)
+- Vulkan backend documentation (when implemented)
 
 ---
 
@@ -279,7 +256,7 @@ OrthoRoute uses **Clean Architecture** with four layers:
 **External integrations**
 
 - `kicad/`: IPC API, SWIG, file parsing
-- `gpu/`: CUDA provider, CPU fallback
+- `gpu/`: Metal provider, CUDA provider, Vulkan stubs, CPU fallback
 - `persistence/`: In-memory repositories
 
 **Rule:** Infrastructure implements Application interfaces
@@ -409,10 +386,10 @@ def route_multiple_nets(
 
 **If you're experienced:** Pick from the high-priority areas (refactoring, KiCad export, convergence).
 
-### "The 3,936-line file is intimidating. How do I understand it?"
+### "The codebase is large. How do I understand it?"
 
-1. Start with `docs/Manhattan_Design_Doc.md`
-2. Read the mixins one at a time (they're separated by concern)
+1. Start with `docs/pathfinder_algorithm.md`
+2. Read the decomposed modules: `lattice_manager.py`, `edge_accountant.py`, `geometry_emitter.py`, `convergence_manager.py`
 3. Follow the execution flow: `main.py` → `pipeline.py` → `unified_pathfinder.py`
 4. Use the extensive logging to see what happens at runtime
 

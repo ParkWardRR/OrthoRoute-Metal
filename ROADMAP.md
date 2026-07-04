@@ -235,7 +235,7 @@
 
 ### Completed (since initial roadmap)
 
-- [x] **Unit test framework** — `pytest.ini`, `conftest.py`, 15+ test files
+- [x] **Unit test framework** — `pytest.ini`, `conftest.py`, 29 test files
 - [x] **Lattice builder tests** (`test_lattice.py`) — Node count, Manhattan adjacency, layer discipline
 - [x] **CSR matrix integrity tests** (`test_csr_graph.py`) — Index bounds, symmetry, weight validation
 - [x] **Via pooling accounting tests** (`test_via_accounting.py`) — Column usage counts, barrel conflict detection
@@ -245,14 +245,20 @@
 - [x] **DRC, serialization, CPU fallback tests** — Integration coverage
 - [x] **Domain models, grid, real_global_grid tests** — Full domain model coverage
 
-### Not Started
+### Completed (v1.0.0)
 
-- [ ] **Portal escape planning tests** — DRC compliance, escape success rates
-- [ ] **Pad mapping tests** — Nearest-node finding, multi-layer mapping
-- [ ] **PathFinder convergence tests** — Known-good boards with expected outcomes
-- [ ] **GPU/CPU parity tests** — Automated comparison of Metal, CUDA, and CPU paths
-- [ ] **Regression test suite** — Prevent regressions across routing quality metrics
-- [ ] **Performance benchmarks** — Automated timing comparison against baselines
+- [x] **Portal escape planning tests** — `test_portal_escape_advanced.py` — DRC clearance, determinism
+- [x] **Pad mapping tests** — `test_pad_mapping_advanced.py` — Nearest-node finding, multi-layer mapping
+- [x] **PathFinder convergence tests** — `test_pathfinder_convergence.py` — Pressure escalation, stagnation
+- [x] **GPU/CPU parity tests** — `test_gpu_cpu_parity_advanced.py` — Dijkstra correctness, provider factory
+- [x] **Regression test suite** — `test_regression.py` — CSR integrity, usage monotonicity
+- [x] **Performance benchmarks** — `test_benchmarks.py` — Timing assertions for critical paths
+- [x] **KiCad integration tests** (180 tests):
+  - [x] `test_kicad_e2e.py` — Full pipeline board→geometry→serialization
+  - [x] `test_kicad_file_parser.py` — S-expression parsing & board construction
+  - [x] `test_kicad_geometry.py` — Coordinate transforms & edge validation
+  - [x] `test_kicad_serialization.py` — ORP/ORS round-trip with compression
+  - [x] `test_kicad_layers.py` — Layer normalization, regex, color schemes
 
 ---
 
@@ -346,10 +352,10 @@
 | GUI & Visualization | 11 | 0 | 1 | **12** |
 | Serialization | 6 | 0 | 1 | **7** |
 | Documentation | 18 | 0 | 0 | **18** |
-| Testing | 19 | 0 | 6 | **25** |
+| Testing | 25 | 0 | 0 | **25** |
 | Performance | 5 | 0 | 5 | **10** |
 | Refactoring | 8 | 0 | 0 | **8** |
 | Future Features | 0 | 0 | 22 | **22** |
-| **TOTAL** | **140** | **0** | **36** | **176** |
+| **TOTAL** | **146** | **0** | **30** | **176** |
 
-> **Overall completion: ~80%** — All stubs fully implemented. `UnifiedPathFinder` decomposed into 4 standalone modules (`LatticeManager`, `EdgeAccountant`, `GeometryEmitter`, `ConvergenceManager`). Metal GPU backend fully integrated via `MetalProvider` with CUDA→Metal→Vulkan→CPU auto-fallback. 24 test files with 349 tests passing. Vulkan compute backend stub infrastructure in place. Remaining work: future features (layer compaction, differential pair routing, Vulkan implementation, platform distribution) and performance benchmarks.
+> **Overall completion: ~83%** — All stubs fully implemented. `UnifiedPathFinder` decomposed into 4 standalone modules (`LatticeManager`, `EdgeAccountant`, `GeometryEmitter`, `ConvergenceManager`). Metal GPU backend fully integrated via `MetalProvider` with CUDA→Metal→Vulkan→CPU auto-fallback. 29 test files with 529 tests passing (13 skipped — Qt) in 0.76s. Vulkan compute backend stub infrastructure in place. KiCad integration fully tested (file parser, geometry, serialization, layers, colors). Remaining work: future features (layer compaction, differential pair routing, Vulkan implementation, platform distribution) and performance benchmarks.
