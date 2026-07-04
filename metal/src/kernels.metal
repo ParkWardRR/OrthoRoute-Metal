@@ -36,6 +36,53 @@ inline void atomic_fetch_min_float(device atomic_uint* dest, float val) {
 }
 
 // =============================================================================
+// Utility: SIMD Prefix-Sum Queue Compaction
+// =============================================================================
+// Instead of each thread doing atomic_fetch_add(queue_size, 1) to push to the
+// frontier queue (32 global atomics per SIMD-group), we use SIMD prefix-sum
+// to compute local offsets within the group, then do ONE global atomic to
+// reserve a contiguous block for the entire SIMD-group.
+//
+// This reduces global memory contention by up to 32× on the queue counter.
+//
+// Usage:
+//   bool wants_to_push = (new_dist < old_dist);
+//   uint local_offset = simd_prefix_exclusive_sum(wants_to_push ? 1u : 0u);
+//   uint group_total  = simd_sum(wants_to_push ? 1u : 0u);
+//   uint base;
+//   if (simd_is_first()) base = atomic_fetch_add_explicit(queue_size, group_total, memory_order_relaxed);
+//   base = simd_broadcast_first(base);
+//   if (wants_to_push) frontier[base + local_offset] = node_id;
+//
+inline uint simd_enqueue(
+    device atomic_uint* frontier,
+    device atomic_uint* queue_size,
+    uint node_id,
+    bool wants_to_push
+) {
+    // Compute per-thread offset within SIMD-group via prefix-sum
+    uint contribution = wants_to_push ? 1u : 0u;
+    uint local_offset = simd_prefix_exclusive_sum(contribution);
+    uint group_total  = simd_sum(contribution);
+    
+    // Only the first active lane does the single global atomic
+    uint base = 0;
+    if (group_total > 0) {
+        if (simd_is_first()) {
+            base = atomic_fetch_add_explicit(queue_size, group_total, memory_order_relaxed);
+        }
+        base = simd_broadcast_first(base);
+    }
+    
+    // Each thread writes to its reserved slot
+    if (wants_to_push) {
+        atomic_store_explicit(&frontier[base + local_offset], node_id, memory_order_relaxed);
+    }
+    
+    return base + local_offset;
+}
+
+// =============================================================================
 // 1. Clear Counters
 // =============================================================================
 kernel void clear_counters(
@@ -112,9 +159,10 @@ kernel void wavefront_expand_all(
             if (is_valid) {
                 dist_u = as_type<float>(atomic_load_explicit(&distances[u], memory_order_relaxed));
                 if (dist_u > bucket_max) {
-                    // Push back to next queue and skip processing
-                    uint q_idx = atomic_fetch_add_explicit(queue_size_next, 1, memory_order_relaxed);
-                    atomic_store_explicit(&frontier_next[q_idx], u, memory_order_relaxed);
+                    // SIMD Prefix-Sum Queue Compaction: batch deferred nodes
+                    // Instead of 32 per-thread atomic_fetch_add, one SIMD-group
+                    // atomic reserves a contiguous block for all deferred lanes.
+                    simd_enqueue(frontier_next, queue_size_next, u, true);
                     
                     atomic_fetch_min_explicit(&grid_barrier[4], as_type<uint>(dist_u), memory_order_relaxed);
                     is_valid = false;

@@ -127,9 +127,8 @@ Instead of processing all frontier nodes regardless of distance, delta-stepping 
 float bucket_max = (float)(current_bucket + 1) * delta;
 
 if (dist_u > bucket_max) {
-    // Defer: push to next frontier
-    uint q_idx = atomic_fetch_add(queue_size_next, 1);
-    frontier_next[q_idx] = u;
+    // SIMD Prefix-Sum Queue Compaction: batch deferred nodes
+    simd_enqueue(frontier_next, queue_size_next, u, true);
 } else if (dist_u < 1e30f) {
     // Process: relax all neighbors
     for (int i = start; i < end; ++i) { ... }
@@ -145,6 +144,55 @@ if (processed == 0) {
     atomic_store(&grid_barrier[2], new_bucket);
 }
 ```
+
+### SIMD Prefix-Sum Queue Compaction
+
+When deferring nodes to the next frontier (bucket overflow), instead of each thread performing an independent `atomic_fetch_add` on the queue counter (32 global atomics per SIMD-group), we use **SIMD prefix-sum** to compute per-thread offsets within the group, then issue **one** global atomic to reserve a contiguous block:
+
+```
+┌──────────────────────────────────────────────────┐
+│  SIMD Group (32 threads)                         │
+│                                                   │
+│  Per-thread: wants_to_push? (true/false)         │
+│  prefix_sum: [0, 1, 1, 2, 2, 2, 3, ...]         │
+│  group_total: 12 (12 of 32 threads need to push) │
+│                                                   │
+│  Lane 0 (simd_is_first):                         │
+│    base = atomic_fetch_add(queue_size, 12)  ← 1! │
+│                                                   │
+│  All lanes:                                       │
+│    base = simd_broadcast_first(base)              │
+│    slot = base + prefix_sum[lane_id]              │
+│    frontier[slot] = node_id                       │
+│                                                   │
+│  Result: 12 enqueues per 1 atomic operation       │
+│  (vs. 12 atomics without prefix-sum)              │
+└──────────────────────────────────────────────────┘
+```
+
+**Code** (`simd_enqueue` utility):
+```metal
+inline uint simd_enqueue(
+    device atomic_uint* frontier,
+    device atomic_uint* queue_size,
+    uint node_id, bool wants_to_push
+) {
+    uint contribution = wants_to_push ? 1u : 0u;
+    uint local_offset = simd_prefix_exclusive_sum(contribution);
+    uint group_total  = simd_sum(contribution);
+    uint base = 0;
+    if (group_total > 0) {
+        if (simd_is_first())
+            base = atomic_fetch_add_explicit(queue_size, group_total, ...);
+        base = simd_broadcast_first(base);
+    }
+    if (wants_to_push)
+        atomic_store_explicit(&frontier[base + local_offset], node_id, ...);
+    return base + local_offset;
+}
+```
+
+**Impact**: Reduces global queue contention by up to 32× for bucket-deferred nodes. Combined with the existing SIMD block stealing (read side), this means both reading from and writing to the frontier queue are batched at the SIMD-group level.
 
 ### Grid Barrier Mechanism
 
