@@ -204,3 +204,67 @@ class PathFinderConfig:
 
     # GPU ROI threshold configuration
     gpu_roi_min_nodes: int = 1000  # Minimum ROI nodes for GPU pathfinding (lowered from 5000 for 2-3x speedup)
+
+    @classmethod
+    def from_env(cls) -> PathFinderConfig:
+        """Create config with overrides from environment variables.
+
+        Recognized env vars:
+            USE_GPU: "1" to enable GPU acceleration
+            SEQUENTIAL_ALL: "1" for sequential routing mode
+            INCREMENTAL_COST_UPDATE: "1" for incremental cost updates
+            ORTHO_CPU_ONLY: "1" to force CPU-only mode
+            ORTHO_PRES_FAC_MULT: float for pressure factor multiplier
+            ORTHO_GRID_PITCH: float for grid pitch in mm
+        """
+        import os
+        config = cls()
+        if os.getenv("USE_GPU") == "1":
+            config.use_gpu = True
+        if os.getenv("ORTHO_CPU_ONLY") == "1":
+            config.use_gpu = False
+        if os.getenv("SEQUENTIAL_ALL") == "1":
+            config.use_gpu_sequential = True
+        if os.getenv("INCREMENTAL_COST_UPDATE") == "1":
+            config.use_incremental_cost_update = True
+        pres_mult = os.getenv("ORTHO_PRES_FAC_MULT")
+        if pres_mult is not None:
+            config.pres_fac_mult = float(pres_mult)
+        grid_pitch = os.getenv("ORTHO_GRID_PITCH")
+        if grid_pitch is not None:
+            config.grid_pitch = float(grid_pitch)
+        return config
+
+    @classmethod
+    def from_json(cls, path: str) -> PathFinderConfig:
+        """Load config from an orthoroute.json file.
+
+        Args:
+            path: Path to orthoroute.json configuration file.
+
+        Returns:
+            PathFinderConfig with values from the JSON file applied.
+
+        The JSON file may contain a top-level "pathfinder" section with
+        any of the PathFinderConfig field names as keys.
+        """
+        import json
+        config = cls()
+        with open(path, 'r') as f:
+            data = json.load(f)
+        pf_section = data.get("pathfinder", data)
+        for key, value in pf_section.items():
+            if hasattr(config, key):
+                setattr(config, key, value)
+        return config
+
+    def merge(self, cli_args: dict) -> None:
+        """Apply CLI argument overrides to this config.
+
+        Args:
+            cli_args: Dictionary of CLI arguments (e.g., from argparse).
+                      Only non-None values are applied.
+        """
+        for key, value in cli_args.items():
+            if value is not None and hasattr(self, key):
+                setattr(self, key, value)

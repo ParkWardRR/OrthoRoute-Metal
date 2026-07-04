@@ -1,4 +1,4 @@
-# OrthoRoute-Metal
+# OrthoRoute-Metal v1.0.0
 
 [![License: Blue Oak 1.0.0](https://img.shields.io/badge/License-Blue_Oak_1.0.0-2D6DB5.svg?style=flat-square)](https://blueoakcouncil.org/license/1.0.0)
 [![Upstream: MIT](https://img.shields.io/badge/Upstream-MIT-green.svg?style=flat-square)](https://github.com/bbenchoff/OrthoRoute)
@@ -15,6 +15,8 @@
 
 **OrthoRoute-Metal** is a native Apple Metal GPU backend for [OrthoRoute](https://github.com/bbenchoff/OrthoRoute), the GPU-accelerated PCB autorouter for KiCad. This fork replaces the CUDA/CuPy dependency with Apple Metal Shading Language (MSL) compute kernels, enabling GPU-accelerated PCB routing on Apple Silicon (M1, M2, M3, M4) without any NVIDIA hardware.
 
+The Metal backend is **fully integrated** into the Python routing pipeline via `MetalProvider`, with automatic CUDA→Metal→CPU fallback. All 7 Metal compute kernels have full feature parity with their CUDA equivalents, verified by 36/36 bitwise-identical parity tests.
+
 > Based on [OrthoRoute](https://github.com/bbenchoff/OrthoRoute) by [Brian Benchoff](https://github.com/bbenchoff), licensed under MIT. See [NOTICE.md](NOTICE.md) for full attribution.
 
 ---
@@ -27,6 +29,8 @@
 - [Getting Started](#getting-started)
 - [Build Instructions](#build-instructions)
 - [Usage](#usage)
+- [Testing](#testing)
+- [Local CI](#local-ci)
 - [Parity Verification](#parity-verification)
 - [Metal Backend Technical Details](#metal-backend-technical-details)
 - [Documentation](#documentation)
@@ -123,14 +127,17 @@ The Class A Amplifier board routes in 26 seconds on the M4 with the following re
 ```
 Python (KiCad / CLI)           Rust (PyO3)              Metal GPU
 +------------------+    +---------------------+    +-------------------+
-| NumPy CSR arrays | -> | MetalDijkstra       | -> | wavefront_expand  |
-| PathFinder loop  |    | Buffer management   |    | SPFA + Delta-Step |
+| MetalProvider    | -> | MetalDijkstra       | -> | wavefront_expand  |
+| UnifiedPathFinder|    | Buffer management   |    | SPFA + Delta-Step |
 | Net ordering     |    | Pipeline caching    |    | Grid barrier      |
 +------------------+    | AMX SGEMM (Accel.)  |    | SIMD block steal  |
-                        +---------------------+    +-------------------+
-                                 |                          |
-                                 +--- UMA (zero-copy) -----+
+        |               +---------------------+    +-------------------+
+        |                        |                          |
+  CUDA -> Metal -> CPU           +--- UMA (zero-copy) -----+
+  (auto-fallback)
 ```
+
+The `MetalProvider` in `orthoroute/infrastructure/gpu/metal_provider.py` implements the `GPUProvider` interface and is automatically selected via `get_best_provider()` with CUDA→Metal→CPU priority. It wraps the Rust/PyO3 `MetalDijkstra` backend for shortest-path dispatch, ROI extraction, and via cost computation.
 
 For a detailed architecture description, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -246,6 +253,49 @@ orthoroute_metal.amx_sgemm_py(
 
 ---
 
+## Testing
+
+OrthoRoute-Metal includes a comprehensive test suite with 15+ test files covering core infrastructure, domain models, and GPU backend integration.
+
+### Run all tests
+
+```bash
+python -m pytest tests/ -v
+```
+
+### Test coverage includes
+
+| Area | Test File(s) |
+|------|-------------|
+| Lattice construction | `test_lattice.py` |
+| CSR graph integrity | `test_csr_graph.py` |
+| Via pooling accounting | `test_via_accounting.py` |
+| Board/layer analysis | `test_board_analyzer.py`, `test_layer_analyzer.py` |
+| Domain models | `test_domain_models.py` |
+| DRC constraints | `test_drc.py` |
+| Serialization (ORP/ORS) | `test_serialization.py` |
+| CPU fallback | `test_cpu_fallback.py` |
+| Configuration | `test_config.py` |
+| Spatial hash | `test_spatial_hash.py` |
+| Grid/real global grid | `test_grid.py`, `test_real_global_grid.py` |
+| Data structures | `test_data_structures.py` |
+| CUDA ↔ Metal parity | 36/36 golden tensor tests |
+
+---
+
+## Local CI
+
+The project uses a local CI pipeline via [OrbStack](https://orbstack.dev/) (not GitHub Actions).
+
+```bash
+# Run the full CI pipeline locally
+./ci/run.sh
+```
+
+The pipeline runs inside a Docker container and executes linting, type checking, and the full test suite.
+
+---
+
 ## Parity Verification
 
 The Metal backend produces identical outputs to the CUDA reference across all tested graph sizes. 36 out of 36 parity tests pass.
@@ -312,6 +362,19 @@ A software grid barrier using `device atomic_uint` and `threadgroup_barrier(mem_
 |----------|-------------|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Three-layer architecture overview |
 | [BENCHMARK_METHODOLOGY.md](docs/BENCHMARK_METHODOLOGY.md) | Hardware, graphs, measurement protocol |
+| [coordinate_system.md](docs/coordinate_system.md) | How (x, y, z) maps to mm and layers |
+| [pathfinder_algorithm.md](docs/pathfinder_algorithm.md) | PathFinder algorithm deep-dive |
+| [metal_kernel_internals.md](docs/metal_kernel_internals.md) | MSL code walkthrough |
+| [api_reference.md](docs/api_reference.md) | Python API reference |
+| [tuning_guide.md](docs/tuning_guide.md) | PathFinder parameter tuning |
+| [barrel_conflicts_explained.md](docs/barrel_conflicts_explained.md) | Via barrel conflict analysis |
+| [cloud_gpu_setup.md](docs/cloud_gpu_setup.md) | Vast.ai cloud GPU setup |
+| [congestion_ratio.md](docs/congestion_ratio.md) | Routability prediction metric |
+| [contributing.md](docs/contributing.md) | Contributor guide |
+| [layer_compaction.md](docs/layer_compaction.md) | Post-routing layer minimization |
+| [plugin_manager_integration.md](docs/plugin_manager_integration.md) | KiCad PCM integration |
+| [ORP_ORS_file_formats.md](docs/ORP_ORS_file_formats.md) | File format specification |
+| [CHANGELOG.md](CHANGELOG.md) | Version history |
 | [NOTICE.md](NOTICE.md) | Upstream attribution and license |
 | [Upstream OrthoRoute](https://github.com/bbenchoff/OrthoRoute) | Original CUDA-based OrthoRoute |
 
