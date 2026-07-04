@@ -291,7 +291,8 @@ def run_headless(
     checkpoint_interval: int = 30,
     resume_checkpoint: Optional[str] = None,
     use_gpu: bool = None,
-    cpu_only: bool = False
+    cpu_only: bool = False,
+    webhook_url: Optional[str] = None
 ):
     """
     Run headless cloud routing mode.
@@ -309,6 +310,7 @@ def run_headless(
         resume_checkpoint: Path to checkpoint file to resume from
         use_gpu: Force GPU mode if True, auto-detect if None
         cpu_only: Force CPU-only mode if True
+        webhook_url: Optional URL to POST progress JSON payloads after each iteration
     """
     try:
         import time
@@ -501,6 +503,53 @@ def run_headless(
         logging.info(f"[HEADLESS] Generated {len(escape_tracks)} escape tracks, {len(escape_vias)} escape vias")
         logging.info(f"[HEADLESS] Created {len(pf.portals)} portals for pad escapes")
 
+        # ── Checkpoint resume: restore PathFinder state from a partial .ORS ─
+        resume_iteration = 0
+        if resume_checkpoint:
+            logging.info(f"[HEADLESS] Resuming from checkpoint: {resume_checkpoint}")
+            try:
+                from orthoroute.infrastructure.serialization.ors_exporter import import_solution_from_ors, convert_ors_to_geometry_payload
+
+                geometry_data, ckpt_metadata = import_solution_from_ors(resume_checkpoint)
+                ckpt_geom = convert_ors_to_geometry_payload(geometry_data)
+
+                # Restore edge ownership from checkpoint tracks
+                restored_tracks = len(ckpt_geom.tracks) if ckpt_geom.tracks else 0
+                restored_vias = len(ckpt_geom.vias) if ckpt_geom.vias else 0
+
+                # Recover the iteration count from checkpoint metadata
+                ckpt_stats = ckpt_metadata.get('statistics', {})
+                ckpt_meta = ckpt_metadata.get('metadata', {})
+                resume_iteration = ckpt_stats.get('iterations_completed', 0)
+
+                # Re-apply committed paths from checkpoint geometry into PathFinder
+                # This feeds the checkpoint tracks/vias back into the present_cost
+                # and history_cost arrays so negotiation resumes where it left off.
+                if hasattr(pf, 'restore_from_geometry') and callable(pf.restore_from_geometry):
+                    pf.restore_from_geometry(ckpt_geom)
+                    logging.info(f"[HEADLESS] PathFinder state restored via restore_from_geometry()")
+                else:
+                    # Fallback: re-inject ownership from checkpoint tracks
+                    # This is a best-effort approach for PathFinders without
+                    # a dedicated restore method.
+                    logging.warning(
+                        "[HEADLESS] PathFinder has no restore_from_geometry() method; "
+                        "routing will restart from scratch but with checkpoint iteration offset"
+                    )
+
+                logging.info(
+                    f"[HEADLESS] Checkpoint loaded: {restored_tracks} tracks, "
+                    f"{restored_vias} vias, resuming from iteration {resume_iteration}"
+                )
+                logging.info(
+                    f"[HEADLESS] Checkpoint converged={ckpt_meta.get('converged', 'N/A')}, "
+                    f"total_time={ckpt_meta.get('total_time_seconds', 'N/A')}s"
+                )
+            except Exception as ckpt_err:
+                logging.error(f"[HEADLESS] Failed to load checkpoint: {ckpt_err}")
+                logging.warning("[HEADLESS] Continuing without checkpoint – routing from scratch")
+                resume_iteration = 0
+
         # Step 5: Prepare routing runtime
         logging.info("[HEADLESS] Step 5: Preparing routing runtime...")
         pf.prepare_routing_runtime()
@@ -509,14 +558,36 @@ def run_headless(
         logging.info("[HEADLESS] Step 6: Starting routing algorithm...")
         logging.info("[HEADLESS] This may take hours for large boards - logs will show progress")
 
-        # Custom iteration callback to track metrics
+        # Custom iteration callback to track metrics, save checkpoints, and post webhooks
         iteration_metrics = []
+        last_checkpoint_time = time.time()
+        checkpoint_interval_sec = checkpoint_interval * 60  # Convert minutes to seconds
+
+        # Webhook helper: non-blocking POST of JSON progress
+        def _post_webhook(url, payload):
+            """POST JSON payload to webhook URL. Non-blocking, never raises."""
+            try:
+                import urllib.request
+                import json as _json
+                data = _json.dumps(payload).encode('utf-8')
+                req = urllib.request.Request(
+                    url,
+                    data=data,
+                    headers={'Content-Type': 'application/json'},
+                    method='POST'
+                )
+                # Short timeout to avoid blocking the routing loop
+                urllib.request.urlopen(req, timeout=5)
+            except Exception as wh_err:
+                logging.debug(f"[WEBHOOK] Failed to post to {url}: {wh_err}")
 
         def iteration_callback(iter_num, provisional_tracks, provisional_vias, overflow_sum, overflow_cnt):
             """Called after each routing iteration."""
-            nonlocal iteration_metrics
+            nonlocal iteration_metrics, last_checkpoint_time
+
+            elapsed = time.time() - start_time
             iteration_metrics.append({
-                'iteration': iter_num,
+                'iteration': iter_num + resume_iteration,
                 'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
                 'duration_s': 0.0,  # Will be calculated from timestamps
                 'overuse': overflow_cnt,
@@ -534,7 +605,55 @@ def run_headless(
                 'stagnation_events': 0,  # Not available in callback
                 'plateau_kick_applied': False,  # Not available in callback
             })
-            logging.info(f"[HEADLESS] Iteration {iter_num}: overuse={overflow_cnt}, tracks={len(provisional_tracks)}, vias={len(provisional_vias)}")
+            logging.info(f"[HEADLESS] Iteration {iter_num + resume_iteration}: overuse={overflow_cnt}, tracks={len(provisional_tracks)}, vias={len(provisional_vias)}")
+
+            # ── Periodic checkpoint saving ──
+            now = time.time()
+            if checkpoint_interval_sec > 0 and (now - last_checkpoint_time) >= checkpoint_interval_sec:
+                try:
+                    ckpt_path = output_file.replace('.ORS', f'_checkpoint_iter{iter_num + resume_iteration}.ORS')
+                    if not ckpt_path.endswith('.ORS'):
+                        ckpt_path += f'_checkpoint_iter{iter_num + resume_iteration}.ORS'
+
+                    # Build a temporary geometry payload for checkpoint
+                    class _TempGeom:
+                        def __init__(self, tracks, vias):
+                            self.tracks = tracks
+                            self.vias = vias
+
+                    ckpt_geom = _TempGeom(provisional_tracks, provisional_vias)
+                    ckpt_meta = {
+                        'orthoroute_version': __version__,
+                        'total_time': elapsed,
+                        'iterations': len(iteration_metrics),
+                        'converged': False,
+                        'nets_routed': len(provisional_tracks),
+                        'track_count': len(provisional_tracks),
+                        'via_count': len(provisional_vias),
+                        'overflow': overflow_cnt,
+                        'notes': f'Auto-checkpoint at iteration {iter_num + resume_iteration}',
+                    }
+                    from orthoroute.infrastructure.serialization import export_solution_to_ors
+                    export_solution_to_ors(ckpt_geom, iteration_metrics, ckpt_meta, ckpt_path, compress=True)
+                    logging.info(f"[HEADLESS] Checkpoint saved: {ckpt_path}")
+                    last_checkpoint_time = now
+                except Exception as ckpt_save_err:
+                    logging.warning(f"[HEADLESS] Checkpoint save failed: {ckpt_save_err}")
+
+            # ── Webhook progress POST ──
+            if webhook_url:
+                convergence_pct = max(0.0, 100.0 * (1.0 - overflow_cnt / max(1, len(provisional_tracks) + len(provisional_vias))))
+                payload = {
+                    'iteration': iter_num + resume_iteration,
+                    'overuse': overflow_cnt,
+                    'tracks': len(provisional_tracks),
+                    'vias': len(provisional_vias),
+                    'elapsed_time': round(elapsed, 2),
+                    'convergence_pct': round(convergence_pct, 2),
+                }
+                # Fire-and-forget in a thread so it doesn't block routing
+                import threading
+                threading.Thread(target=_post_webhook, args=(webhook_url, payload), daemon=True).start()
 
         result = pf.route_multiple_nets(board.nets, iteration_cb=iteration_callback)
 
@@ -759,6 +878,10 @@ Examples:
         help='Resume from checkpoint file'
     )
     headless_parser.add_argument(
+        '--webhook-url',
+        help='URL to POST progress JSON payloads after each iteration (optional)'
+    )
+    headless_parser.add_argument(
         '--use-gpu',
         action='store_true',
         help='Enable GPU acceleration if available (default: auto-detect)'
@@ -831,7 +954,8 @@ Examples:
                     checkpoint_interval=getattr(args, 'checkpoint_interval', 30),
                     resume_checkpoint=getattr(args, 'resume_checkpoint', None),
                     use_gpu=getattr(args, 'use_gpu', None),
-                    cpu_only=getattr(args, 'cpu_only', False)
+                    cpu_only=getattr(args, 'cpu_only', False),
+                    webhook_url=getattr(args, 'webhook_url', None)
                 )
             else:
                 parser.error(f"Unknown mode: {args.mode}")

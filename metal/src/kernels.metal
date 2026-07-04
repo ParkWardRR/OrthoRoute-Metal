@@ -209,27 +209,92 @@ kernel void negotiation_kernel(
 
 // -----------------------------------------------------------------------------
 // 3. ROI Extractor Mixin
+//
+// Extracts distances for nodes whose (x, y, z) coordinates fall within
+// the specified axis-aligned bounding box [x_min..x_max, y_min..y_max,
+// z_min..z_max]. Matched distances and node IDs are compacted into
+// output arrays using an atomic counter.
+//
+// Buffer layout:
+//   [0] distances     — per-node shortest-path distances (float)
+//   [1] roi_distances — output: filtered distances (float), sized to num_nodes
+//   [2] roi_node_ids  — output: matched node IDs (uint), sized to num_nodes
+//   [3] roi_count     — output: atomic counter of matched nodes (uint)
+//   [4] node_x        — per-node X coordinates (float)
+//   [5] node_y        — per-node Y coordinates (float)
+//   [6] node_z        — per-node Z coordinates (float)
+//   [7] roi_bounds    — [x_min, y_min, z_min, x_max, y_max, z_max] (float)
 // -----------------------------------------------------------------------------
 kernel void roi_extractor_mixin(
-    device const float* distances [[buffer(0)]],
-    device float* roi_output [[buffer(1)]],
+    device const float* distances      [[buffer(0)]],
+    device float*       roi_distances  [[buffer(1)]],
+    device uint*        roi_node_ids   [[buffer(2)]],
+    device atomic_uint* roi_count      [[buffer(3)]],
+    device const float* node_x         [[buffer(4)]],
+    device const float* node_y         [[buffer(5)]],
+    device const float* node_z         [[buffer(6)]],
+    device const float* roi_bounds     [[buffer(7)]],
     uint tid [[thread_position_in_grid]]
 ) {
-    if (distances[tid] < 1000.0) {
-        roi_output[tid] = distances[tid];
-    } else {
-        roi_output[tid] = -1.0;
+    float x = node_x[tid];
+    float y = node_y[tid];
+    float z = node_z[tid];
+
+    float x_min = roi_bounds[0];
+    float y_min = roi_bounds[1];
+    float z_min = roi_bounds[2];
+    float x_max = roi_bounds[3];
+    float y_max = roi_bounds[4];
+    float z_max = roi_bounds[5];
+
+    // Check if the node falls within the 3D bounding box
+    bool in_roi = (x >= x_min && x <= x_max &&
+                   y >= y_min && y <= y_max &&
+                   z >= z_min && z <= z_max);
+
+    // Only output nodes inside the ROI with finite distances
+    if (in_roi && distances[tid] < 1e30f) {
+        uint slot = atomic_fetch_add_explicit(roi_count, 1, memory_order_relaxed);
+        roi_distances[slot] = distances[tid];
+        roi_node_ids[slot]  = tid;
     }
 }
 
 // -----------------------------------------------------------------------------
 // 4. Via Processing Kernels
+//
+// Computes via costs based on capacity and current usage:
+//   - usage >= capacity → cost = INFINITY (hard-block, via is full)
+//   - 0 < usage < capacity → cost = base_cost * (1.0 + usage/capacity)
+//     (pooling penalty — congested vias become more expensive)
+//   - usage == 0 → cost = base_cost (no penalty)
+//
+// Buffer layout:
+//   [0] via_costs    — output: computed cost per via (float)
+//   [1] via_capacity — per-via capacity limit (float)
+//   [2] via_usage    — per-via current usage count (float)
+//   [3] base_cost    — scalar base cost multiplier (float)
 // -----------------------------------------------------------------------------
 kernel void via_kernels(
-    device float* via_costs [[buffer(0)]],
+    device float*       via_costs    [[buffer(0)]],
+    device const float* via_capacity [[buffer(1)]],
+    device const float* via_usage    [[buffer(2)]],
+    constant float&     base_cost    [[buffer(3)]],
     uint tid [[thread_position_in_grid]]
 ) {
-    via_costs[tid] = 1.0;
+    float capacity = via_capacity[tid];
+    float usage    = via_usage[tid];
+
+    if (capacity <= 0.0f || usage >= capacity) {
+        // Hard-block: via is at or over capacity (or has zero/negative capacity)
+        via_costs[tid] = INFINITY;
+    } else if (usage > 0.0f) {
+        // Pooling penalty: linearly increasing cost as usage approaches capacity
+        via_costs[tid] = base_cost * (1.0f + usage / capacity);
+    } else {
+        // No congestion — base cost only
+        via_costs[tid] = base_cost;
+    }
 }
 // -----------------------------------------------------------------------------
 // 5. SPFA Setup Kernel

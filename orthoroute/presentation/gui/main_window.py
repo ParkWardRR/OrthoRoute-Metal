@@ -6,6 +6,7 @@ New architecture implementation of the rich GUI functionality
 
 import sys
 import logging
+import copy
 from typing import Dict, Any, Optional, List
 import os
 import time
@@ -342,6 +343,10 @@ class PCBViewer(QWidget):
         self.show_zones = True
         self.show_keepouts = True
         
+        # Congestion heatmap overlay
+        self.show_congestion_heatmap = False
+        self._congestion_data = None  # (grid_x, grid_y, density_matrix)
+        
         # Layer visibility tracking (will be updated when board loads with actual layer names)
         self.visible_layers = set()  # Start empty, will be populated from board_data['layer_names']
         
@@ -412,6 +417,10 @@ class PCBViewer(QWidget):
         
         # Skip artificial board outline - real boards should use Edge.Cuts layer
         # self._draw_board_outline(painter)
+        
+        # Draw congestion heatmap overlay (behind all geometry)
+        if self.show_congestion_heatmap and self._congestion_data is not None:
+            self._draw_congestion_heatmap(painter)
         
         # Draw airwires (behind everything)
         if self.show_airwires:
@@ -1038,6 +1047,72 @@ class PCBViewer(QWidget):
             self.board_data['vias'] = vias
         # Trigger repaint
         self.update()
+
+    def set_congestion_data(self, congestion_data):
+        """Set congestion heatmap data for overlay rendering.
+        
+        Args:
+            congestion_data: Tuple of (grid_xs, grid_ys, density_matrix) where
+                grid_xs/grid_ys are 1D arrays of grid coordinates (mm) and
+                density_matrix is a 2D array of congestion density values [0, 1].
+                Set to None to clear the heatmap.
+        """
+        self._congestion_data = congestion_data
+        self.update()
+
+    def _draw_congestion_heatmap(self, painter: QPainter):
+        """Draw semi-transparent congestion heatmap overlay on the PCB view.
+        
+        Uses green (low congestion) to red (high congestion) color gradient.
+        Data comes from PathFinder's present_cost and history_cost arrays.
+        """
+        if self._congestion_data is None:
+            return
+
+        try:
+            grid_xs, grid_ys, density_matrix = self._congestion_data
+            if density_matrix is None or len(grid_xs) < 2 or len(grid_ys) < 2:
+                return
+
+            # Cell dimensions
+            cell_w = grid_xs[1] - grid_xs[0] if len(grid_xs) > 1 else 1.0
+            cell_h = grid_ys[1] - grid_ys[0] if len(grid_ys) > 1 else 1.0
+
+            rows = len(grid_ys)
+            cols = len(grid_xs)
+
+            for r in range(rows):
+                for c in range(cols):
+                    density = density_matrix[r][c]
+                    if density <= 0.01:
+                        continue  # Skip near-zero cells for performance
+
+                    # Clamp to [0, 1]
+                    density = max(0.0, min(1.0, density))
+
+                    # Interpolate green -> yellow -> red
+                    if density < 0.5:
+                        # Green to Yellow
+                        t = density * 2.0
+                        red = int(255 * t)
+                        green = 255
+                    else:
+                        # Yellow to Red
+                        t = (density - 0.5) * 2.0
+                        red = 255
+                        green = int(255 * (1.0 - t))
+
+                    color = QColor(red, green, 0, 90)  # Semi-transparent (alpha=90)
+
+                    x = grid_xs[c] - cell_w / 2
+                    y = grid_ys[r] - cell_h / 2
+
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.setBrush(QBrush(color))
+                    painter.drawRect(QRectF(x, y, cell_w, cell_h))
+
+        except Exception as e:
+            logger.warning(f"Error drawing congestion heatmap: {e}")
             
 
 class OrthoRouteMainWindow(QMainWindow):
@@ -1058,6 +1133,9 @@ class OrthoRouteMainWindow(QMainWindow):
         self.status_label = None
         self.gpu_status = None
         self.routing_result = None
+
+        # Rollback state: snapshot of board_data tracks/vias before routing
+        self._rollback_snapshot = None
 
         # Initialize KiCad color scheme (needed for layers panel)
         self.color_scheme = KiCadColorScheme()
@@ -1232,6 +1310,22 @@ class OrthoRouteMainWindow(QMainWindow):
         solution_layout.addWidget(self.rollback_btn)
         solution_layout.addWidget(self.replay_btn)
         routing_layout.addLayout(solution_layout)
+
+        # Net-selective routing
+        selective_layout = QHBoxLayout()
+        self.route_selected_btn = QPushButton("Route Selected")
+        self.route_selected_btn.clicked.connect(self._route_selected_nets)
+        self.route_selected_btn.setToolTip("Route only nets selected in the Nets tree")
+        self.route_selected_btn.setEnabled(True)
+
+        self.clear_routes_btn = QPushButton("Clear Routes")
+        self.clear_routes_btn.clicked.connect(self._clear_routes)
+        self.clear_routes_btn.setToolTip("Clear all routing results and reset PathFinder state")
+        self.clear_routes_btn.setEnabled(True)
+
+        selective_layout.addWidget(self.route_selected_btn)
+        selective_layout.addWidget(self.clear_routes_btn)
+        routing_layout.addLayout(selective_layout)
         
         layout.addWidget(routing_group)
 
@@ -1265,6 +1359,15 @@ class OrthoRouteMainWindow(QMainWindow):
         self.show_portal_dots_checkbox.setChecked(False)
         self.show_portal_dots_checkbox.toggled.connect(self.toggle_portal_dots)
         debug_layout.addWidget(self.show_portal_dots_checkbox)
+
+        # Congestion heatmap overlay toggle
+        self.congestion_heatmap_checkbox = QCheckBox("Congestion heatmap overlay")
+        self.congestion_heatmap_checkbox.setChecked(False)
+        self.congestion_heatmap_checkbox.setToolTip(
+            "Overlay congestion density from PathFinder (red=high, green=low)"
+        )
+        self.congestion_heatmap_checkbox.toggled.connect(self._toggle_congestion_heatmap)
+        debug_layout.addWidget(self.congestion_heatmap_checkbox)
 
         layout.addWidget(debug_group)
 
@@ -1568,18 +1671,16 @@ class OrthoRouteMainWindow(QMainWindow):
         logger.info("Route All Nets button clicked")
         self.status_label.setText("Routing all nets...")
         
-        # TODO: Implement actual routing logic
-        QMessageBox.information(self, "Routing", "Routing functionality not yet implemented")
-        
-        self.status_label.setText("Ready")
+        # Delegate to begin_autorouting which handles the full pipeline
+        self.begin_autorouting()
         
     def clear_routes(self):
         """Clear all existing routes"""
         logger.info("Clear All Routes button clicked")
         self.status_label.setText("Clearing routes...")
         
-        # TODO: Implement route clearing logic
-        QMessageBox.information(self, "Clear Routes", "Route clearing functionality not yet implemented")
+        # Delegate to the full implementation
+        self._clear_routes()
         
         self.status_label.setText("Ready")
         
@@ -1777,6 +1878,9 @@ class OrthoRouteMainWindow(QMainWindow):
 
         algorithm_text = self.algorithm_combo.currentText()
         logger.info(f"Begin autorouting with {algorithm_text}")
+
+        # Save rollback snapshot before routing
+        self._save_rollback_snapshot()
 
         # Set GPU environment variable based on checkbox
         import os
@@ -2688,19 +2792,26 @@ class OrthoRouteMainWindow(QMainWindow):
         self.status_label.setText("Routes applied - click 'Apply to KiCad' again if needed")
         
     def rollback_routes(self):
-        """Discard calculated routes"""
-        logger.info("Discarding routes")
-        self.status_label.setText("Discarding routes...")
+        """Discard calculated routes and restore the previous state.
         
-        # TODO: Implement route rollback
-        QMessageBox.information(self, "Discard Routes", "Route discarding not yet implemented")
-        
+        Restores the rollback snapshot saved before the last routing operation.
+        This reverts tracks, vias, and display back to the pre-routing state.
+        """
+        logger.info("Discarding routes – rolling back to pre-routing state")
+        self.status_label.setText("Rolling back routes...")
+
+        try:
+            self._rollback_route()
+        except Exception as e:
+            logger.error(f"Rollback failed: {e}")
+            QMessageBox.critical(self, "Rollback Error", f"Failed to rollback routes:\n{str(e)}")
+
         self.commit_btn.setEnabled(False)
         self.rollback_btn.setEnabled(False)
         self.replay_btn.setEnabled(False)
         self.route_preview_btn.setEnabled(True)
         self.overuse_table_label.setText("Ready for routing")
-        self.status_label.setText("Routes discarded")
+        self.status_label.setText("Routes rolled back")
 
     def replay_routing(self):
         """Re-run the same routing with clean state for demo repeatability"""
@@ -2756,6 +2867,406 @@ class OrthoRouteMainWindow(QMainWindow):
     def auto_route_all(self):
         """Auto route all nets (menu action)"""
         self.begin_autorouting()
+
+    # ── Implemented GUI stubs ─────────────────────────────────────────────
+
+    def _save_rollback_snapshot(self):
+        """Save a deep-copy snapshot of current routing state for rollback."""
+        try:
+            self._rollback_snapshot = {
+                'tracks': copy.deepcopy(self.board_data.get('tracks', [])),
+                'vias': copy.deepcopy(self.board_data.get('vias', [])),
+            }
+            logger.info(
+                f"[ROLLBACK] Saved snapshot: {len(self._rollback_snapshot['tracks'])} tracks, "
+                f"{len(self._rollback_snapshot['vias'])} vias"
+            )
+        except Exception as e:
+            logger.error(f"[ROLLBACK] Failed to save snapshot: {e}")
+            self._rollback_snapshot = None
+
+    def _rollback_route(self):
+        """Restore routing state from the most recent rollback snapshot.
+
+        Reverts board_data tracks/vias to the snapshot captured before the
+        last routing operation and refreshes the PCB viewer.
+        """
+        if self._rollback_snapshot is None:
+            logger.warning("[ROLLBACK] No rollback snapshot available – nothing to restore")
+            QMessageBox.information(
+                self, "Rollback",
+                "No previous routing state saved. Run routing first."
+            )
+            return
+
+        try:
+            # Restore board_data tracks and vias from snapshot
+            self.board_data['tracks'] = copy.deepcopy(self._rollback_snapshot['tracks'])
+            self.board_data['vias'] = copy.deepcopy(self._rollback_snapshot['vias'])
+
+            logger.info(
+                f"[ROLLBACK] Restored snapshot: {len(self.board_data['tracks'])} tracks, "
+                f"{len(self.board_data['vias'])} vias"
+            )
+
+            # Refresh the PCB viewer with restored state
+            if self.pcb_viewer:
+                self.pcb_viewer.update_routing(
+                    self.board_data['tracks'],
+                    self.board_data['vias']
+                )
+                self.pcb_viewer.update()
+
+            # Clear routing result
+            self.routing_result = None
+
+            # Clear the snapshot (one-shot rollback)
+            self._rollback_snapshot = None
+
+            self.status_label.setText("Routes rolled back to previous state")
+            self.log_to_gui("↩️ Routes rolled back successfully", "SUCCESS")
+
+        except Exception as e:
+            logger.error(f"[ROLLBACK] Restore failed: {e}")
+            raise
+
+    def _route_selected_nets(self):
+        """Route only the nets that are currently selected in the nets tree.
+
+        Gets the selection from the nets tree widget, filters board nets to
+        the selected subset, and runs the PathFinder on only those nets.
+        Progress is shown in the status bar.
+        """
+        if not self.plugin:
+            QMessageBox.critical(self, "Plugin Error", "No plugin instance available")
+            return
+
+        try:
+            # Gather selected net names from the tree widget
+            selected_items = self.nets_tree.selectedItems()
+            if not selected_items:
+                QMessageBox.information(
+                    self, "No Selection",
+                    "No nets selected. Select nets in the Nets tree first.\n\n"
+                    "Tip: Hold Ctrl/Cmd to select multiple nets."
+                )
+                return
+
+            selected_net_names = set()
+            for item in selected_items:
+                net_name = item.text(0)  # Column 0 = net name
+                if net_name:
+                    selected_net_names.add(net_name)
+
+            if not selected_net_names:
+                QMessageBox.information(self, "No Selection", "No valid net names selected.")
+                return
+
+            logger.info(f"[ROUTE-SELECTED] Routing {len(selected_net_names)} selected nets: {list(selected_net_names)[:5]}...")
+            self.status_label.setText(f"Routing {len(selected_net_names)} selected nets...")
+            self.log_to_gui(f"[ROUTE-SELECTED] Starting selective routing for {len(selected_net_names)} nets", "INFO")
+
+            # Save rollback snapshot before routing
+            self._save_rollback_snapshot()
+            self._set_ui_busy(True, f"Routing {len(selected_net_names)} selected nets…")
+
+            # Get pathfinder and build board
+            pf = self.plugin.get_pathfinder()
+            board = self._create_board_from_data()
+
+            # Filter board nets to selected subset
+            original_nets = board.nets
+            board.nets = [net for net in original_nets if net.name in selected_net_names]
+            logger.info(f"[ROUTE-SELECTED] Filtered to {len(board.nets)} nets from {len(original_nets)} total")
+
+            if not board.nets:
+                QMessageBox.warning(
+                    self, "No Matching Nets",
+                    "Selected nets not found in board data. Check net names."
+                )
+                self._set_ui_busy(False)
+                return
+
+            # Initialize graph if not already done
+            self.log_to_gui("[PIPELINE] Initializing graph for selected nets...", "INFO")
+            pf.initialize_graph(board)
+            pf.map_all_pads(board)
+
+            # Attach GUI pads for DRC
+            board._gui_pads = self.board_data.get('pads', [])
+
+            # Precompute pad escapes
+            escape_tracks, escape_vias = pf.precompute_all_pad_escapes(board)
+            if escape_tracks or escape_vias:
+                if 'tracks' not in self.board_data:
+                    self.board_data['tracks'] = []
+                if 'vias' not in self.board_data:
+                    self.board_data['vias'] = []
+                self.board_data['tracks'].extend(escape_tracks)
+                self.board_data['vias'].extend(escape_vias)
+
+            pf.prepare_routing_runtime()
+
+            # Route selected nets
+            self.log_to_gui(f"[PIPELINE] Routing {len(board.nets)} selected nets...", "INFO")
+            routing_result = pf.route_multiple_nets(board.nets)
+
+            # Emit geometry
+            tracks_count, vias_count = pf.emit_geometry(board)
+            geom = pf.get_geometry_payload()
+
+            # Update viewer
+            if geom and self.pcb_viewer:
+                self.pcb_viewer.update_routing(geom.tracks, geom.vias)
+
+            self.log_to_gui(
+                f"✅ Selected-net routing complete: {tracks_count} tracks, {vias_count} vias",
+                "SUCCESS"
+            )
+            self.status_label.setText(
+                f"Selective routing complete: {tracks_count} tracks, {vias_count} vias"
+            )
+
+            # Enable commit/rollback if we got results
+            if tracks_count > 0 or vias_count > 0:
+                self.commit_btn.setEnabled(True)
+                self.rollback_btn.setEnabled(True)
+                self.replay_btn.setEnabled(True)
+
+        except Exception as e:
+            logger.exception("Selected-net routing failed")
+            self.log_to_gui(f"❌ Selected-net routing failed: {e}", "ERROR")
+            QMessageBox.critical(self, "Routing Error", f"Selected-net routing failed:\n{str(e)}")
+        finally:
+            self._set_ui_busy(False)
+
+    def _clear_routes(self):
+        """Clear all routing results from PathFinder state and display.
+
+        Resets edge ownership, predecessors, distances, and present/history
+        cost arrays in the PathFinder.  Clears all tracks and vias from the
+        board_data and refreshes the PCB viewer to show the unrouted state.
+        """
+        logger.info("[CLEAR] Clearing all routes")
+        self.status_label.setText("Clearing all routes...")
+
+        try:
+            # 1. Reset PathFinder state arrays if available
+            if self.plugin:
+                try:
+                    pf = self.plugin.get_pathfinder()
+                    if pf is not None:
+                        import numpy as np
+                        # Reset edge ownership
+                        if hasattr(pf, 'owner'):
+                            pf.owner[:] = -1
+                            logger.info("[CLEAR] Reset edge ownership")
+                        # Reset predecessor array
+                        if hasattr(pf, 'predecessor'):
+                            pf.predecessor[:] = -1
+                            logger.info("[CLEAR] Reset predecessors")
+                        # Reset distance array
+                        if hasattr(pf, 'dist'):
+                            pf.dist[:] = np.inf
+                            logger.info("[CLEAR] Reset distances")
+                        # Reset present cost
+                        if hasattr(pf, 'present_cost'):
+                            pf.present_cost[:] = 0.0
+                            logger.info("[CLEAR] Reset present_cost")
+                        # Reset history cost
+                        if hasattr(pf, 'history_cost'):
+                            pf.history_cost[:] = 0.0
+                            logger.info("[CLEAR] Reset history_cost")
+                        # Clear committed paths
+                        if hasattr(pf, 'graph_state') and hasattr(pf.graph_state, 'committed_paths'):
+                            pf.graph_state.committed_paths.clear()
+                            logger.info("[CLEAR] Cleared committed paths")
+                except Exception as pf_err:
+                    logger.warning(f"[CLEAR] Could not reset PathFinder state: {pf_err}")
+
+            # 2. Clear geometry from board_data
+            self.board_data['tracks'] = []
+            self.board_data['vias'] = []
+            logger.info("[CLEAR] Cleared tracks and vias from board_data")
+
+            # 3. Update the PCB viewer
+            if self.pcb_viewer:
+                self.pcb_viewer.update_routing([], [])
+                self.pcb_viewer.update()
+
+            # 4. Clear congestion heatmap data
+            if self.pcb_viewer and hasattr(self.pcb_viewer, '_congestion_data'):
+                self.pcb_viewer._congestion_data = None
+                self.pcb_viewer.show_congestion_heatmap = False
+                if hasattr(self, 'congestion_heatmap_checkbox'):
+                    self.congestion_heatmap_checkbox.blockSignals(True)
+                    self.congestion_heatmap_checkbox.setChecked(False)
+                    self.congestion_heatmap_checkbox.blockSignals(False)
+
+            # 5. Reset UI buttons
+            self.commit_btn.setEnabled(False)
+            self.rollback_btn.setEnabled(False)
+            self.replay_btn.setEnabled(False)
+            self.route_preview_btn.setEnabled(True)
+            self.overuse_table_label.setText("Routes cleared – ready for routing")
+
+            # 6. Clear rollback snapshot (no longer valid)
+            self._rollback_snapshot = None
+            self.routing_result = None
+
+            self.log_to_gui("🧹 All routes cleared", "SUCCESS")
+            self.status_label.setText("Routes cleared")
+
+        except Exception as e:
+            logger.error(f"[CLEAR] Error clearing routes: {e}")
+            QMessageBox.critical(self, "Clear Error", f"Failed to clear routes:\n{str(e)}")
+
+    def _toggle_congestion_heatmap(self, checked: bool):
+        """Toggle congestion heatmap overlay visibility.
+
+        When enabled, computes per-region congestion density from the
+        PathFinder's present_cost and history_cost arrays and passes it to
+        the PCB viewer for overlay rendering.
+        """
+        logger.info(f"[HEATMAP] Congestion heatmap: {'enabled' if checked else 'disabled'}")
+
+        if not self.pcb_viewer:
+            return
+
+        self.pcb_viewer.show_congestion_heatmap = checked
+
+        if checked:
+            # Build congestion data from PathFinder arrays
+            try:
+                congestion_data = self._compute_congestion_heatmap()
+                if congestion_data is not None:
+                    self.pcb_viewer.set_congestion_data(congestion_data)
+                    self.log_to_gui("🌡️ Congestion heatmap enabled", "INFO")
+                else:
+                    self.log_to_gui("⚠️ No congestion data available – run routing first", "WARNING")
+                    self.pcb_viewer.show_congestion_heatmap = False
+                    self.congestion_heatmap_checkbox.blockSignals(True)
+                    self.congestion_heatmap_checkbox.setChecked(False)
+                    self.congestion_heatmap_checkbox.blockSignals(False)
+            except Exception as e:
+                logger.error(f"[HEATMAP] Error computing congestion: {e}")
+                self.log_to_gui(f"❌ Congestion heatmap error: {e}", "ERROR")
+                self.pcb_viewer.show_congestion_heatmap = False
+        else:
+            self.pcb_viewer.set_congestion_data(None)
+            self.log_to_gui("Congestion heatmap disabled", "INFO")
+
+        self.pcb_viewer.update()
+
+    def _compute_congestion_heatmap(self):
+        """Compute per-region congestion density from PathFinder arrays.
+
+        Uses present_cost and history_cost to derive a density grid that
+        the PCB viewer can render as a heatmap overlay.
+
+        Returns:
+            Tuple (grid_xs, grid_ys, density_matrix) or None if no data available.
+        """
+        if not self.plugin:
+            return None
+
+        try:
+            import numpy as np
+            pf = self.plugin.get_pathfinder()
+            if pf is None:
+                return None
+
+            # Check for required arrays
+            has_present = hasattr(pf, 'present_cost') and pf.present_cost is not None
+            has_history = hasattr(pf, 'history_cost') and pf.history_cost is not None
+            has_coords = hasattr(pf, 'node_coordinates_lattice') and pf.node_coordinates_lattice is not None
+
+            if not has_present and not has_history:
+                logger.info("[HEATMAP] No present_cost or history_cost arrays available")
+                return None
+
+            if not has_coords:
+                logger.info("[HEATMAP] No node_coordinates_lattice available")
+                return None
+
+            # Combine present_cost and history_cost into a per-edge congestion score
+            num_edges = len(pf.present_cost) if has_present else len(pf.history_cost)
+            congestion = np.zeros(num_edges, dtype=np.float64)
+            if has_present:
+                congestion += pf.present_cost.astype(np.float64)
+            if has_history:
+                congestion += pf.history_cost.astype(np.float64)
+
+            if congestion.max() <= 0:
+                logger.info("[HEATMAP] All congestion values are zero")
+                return None
+
+            # Get board bounds for grid construction
+            bounds = self.board_data.get('bounds', (0, 0, 100, 100))
+            min_x, min_y, max_x, max_y = bounds
+            board_w = max_x - min_x
+            board_h = max_y - min_y
+
+            if board_w <= 0 or board_h <= 0:
+                return None
+
+            # Create a grid (aim for ~50x50 cells, adjust to aspect ratio)
+            grid_res = max(board_w, board_h) / 50.0
+            if grid_res <= 0:
+                grid_res = 1.0
+
+            cols = max(1, int(board_w / grid_res))
+            rows = max(1, int(board_h / grid_res))
+            cell_w = board_w / cols
+            cell_h = board_h / rows
+
+            grid_xs = np.array([min_x + (c + 0.5) * cell_w for c in range(cols)])
+            grid_ys = np.array([min_y + (r + 0.5) * cell_h for r in range(rows)])
+            density = np.zeros((rows, cols), dtype=np.float64)
+
+            # Map edge congestion to spatial grid using node coordinates
+            coords = pf.node_coordinates_lattice  # shape (N, 2) or (N, 3)
+            indptr = pf.indptr_g
+            indices = pf.indices_g
+
+            # For each edge, accumulate congestion at the midpoint location
+            for node_idx in range(len(indptr) - 1):
+                if node_idx >= len(coords):
+                    break
+                start_edge = indptr[node_idx]
+                end_edge = indptr[node_idx + 1]
+                for edge_idx in range(start_edge, end_edge):
+                    if edge_idx >= num_edges:
+                        break
+                    c_val = congestion[edge_idx]
+                    if c_val <= 0:
+                        continue
+
+                    # Get source node coordinates
+                    nx = coords[node_idx, 0]
+                    ny = coords[node_idx, 1]
+
+                    # Map to grid cell
+                    gc = int((nx - min_x) / cell_w)
+                    gr = int((ny - min_y) / cell_h)
+                    gc = max(0, min(cols - 1, gc))
+                    gr = max(0, min(rows - 1, gr))
+                    density[gr, gc] += c_val
+
+            # Normalize to [0, 1]
+            dmax = density.max()
+            if dmax > 0:
+                density /= dmax
+
+            logger.info(
+                f"[HEATMAP] Computed congestion grid: {rows}x{cols}, "
+                f"max_raw={dmax:.2f}, non-zero cells={int(np.count_nonzero(density))}"
+            )
+            return (grid_xs.tolist(), grid_ys.tolist(), density.tolist())
+
+        except Exception as e:
+            logger.error(f"[HEATMAP] Congestion computation failed: {e}")
+            return None
 
     def _ensure_router_exists(self):
         """Create router instance if it doesn't exist (for checkpoint loading)"""

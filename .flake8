@@ -1,0 +1,8 @@
+[flake8]
+max-line-length = 120
+exclude = .git,__pycache__,build,dist,*.egg-info,metal/target
+ignore = E501,W503,E203,E266
+per-file-ignores =
+    __init__.py:F401
+    orthoroute/algorithms/manhattan/pathfinder/cuda_dijkstra.py:E501
+    orthoroute/algorithms/manhattan/unified_pathfinder.py:E501

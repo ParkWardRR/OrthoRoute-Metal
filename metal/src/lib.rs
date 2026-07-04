@@ -345,14 +345,201 @@ impl MetalDijkstra {
         }
     }
 
-    pub fn extract_roi(&self) -> PyResult<()> {
-        println!("[Metal-Exec] Dispatching ROI extraction...");
-        Ok(())
+    /// Dispatch the ROI extractor kernel on the Metal GPU.
+    ///
+    /// Accepts ROI bounds and per-node coordinate arrays, dispatches the
+    /// `roi_extractor_mixin` kernel to filter distances by spatial region,
+    /// and returns (filtered_distances, matched_node_ids) as NumPy arrays.
+    pub fn extract_roi<'py>(
+        &self,
+        py: Python<'py>,
+        x_min: f32,
+        y_min: f32,
+        z_min: f32,
+        x_max: f32,
+        y_max: f32,
+        z_max: f32,
+        node_x: PyReadonlyArray1<'py, f32>,
+        node_y: PyReadonlyArray1<'py, f32>,
+        node_z: PyReadonlyArray1<'py, f32>,
+    ) -> PyResult<(Bound<'py, pyo3::types::PyAny>, Bound<'py, pyo3::types::PyAny>)> {
+        let distances_buf = self.distances_buf.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("Distances buffer not initialized")
+        })?;
+
+        let node_x_slice = node_x.as_slice()
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("node_x not contiguous: {}", e)))?;
+        let node_y_slice = node_y.as_slice()
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("node_y not contiguous: {}", e)))?;
+        let node_z_slice = node_z.as_slice()
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("node_z not contiguous: {}", e)))?;
+
+        let num_nodes = self.node_count;
+        if node_x_slice.len() != num_nodes || node_y_slice.len() != num_nodes || node_z_slice.len() != num_nodes {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Coordinate arrays must have length {} (node_count), got x={}, y={}, z={}",
+                num_nodes, node_x_slice.len(), node_y_slice.len(), node_z_slice.len()
+            )));
+        }
+
+        let options = MTLResourceOptions::StorageModeShared;
+
+        // Output buffers: worst case all nodes match
+        let roi_distances_buf = self.device.new_buffer(
+            (num_nodes * mem::size_of::<f32>()) as u64, options,
+        );
+        let roi_node_ids_buf = self.device.new_buffer(
+            (num_nodes * mem::size_of::<u32>()) as u64, options,
+        );
+        // Atomic counter for matched nodes (initialized to 0)
+        let roi_count_buf = self.device.new_buffer(
+            mem::size_of::<u32>() as u64, options,
+        );
+        unsafe { *(roi_count_buf.contents() as *mut u32) = 0; }
+
+        // Coordinate buffers (zero-copy via UMA)
+        let node_x_buf = self.device.new_buffer_with_bytes_no_copy(
+            node_x_slice.as_ptr() as *const _, (num_nodes * mem::size_of::<f32>()) as u64, options, None,
+        );
+        let node_y_buf = self.device.new_buffer_with_bytes_no_copy(
+            node_y_slice.as_ptr() as *const _, (num_nodes * mem::size_of::<f32>()) as u64, options, None,
+        );
+        let node_z_buf = self.device.new_buffer_with_bytes_no_copy(
+            node_z_slice.as_ptr() as *const _, (num_nodes * mem::size_of::<f32>()) as u64, options, None,
+        );
+
+        // ROI bounds buffer: [x_min, y_min, z_min, x_max, y_max, z_max]
+        let bounds: [f32; 6] = [x_min, y_min, z_min, x_max, y_max, z_max];
+        let roi_bounds_buf = self.device.new_buffer_with_data(
+            bounds.as_ptr() as *const _, (6 * mem::size_of::<f32>()) as u64, options,
+        );
+
+        // Dispatch the roi_extractor_mixin kernel
+        let command_buffer = self.command_queue.new_command_buffer();
+        let encoder = command_buffer.new_compute_command_encoder();
+        encoder.push_debug_group("ROI Extraction");
+        encoder.set_compute_pipeline_state(&self.roi_pipeline);
+        encoder.set_buffer(0, Some(distances_buf), 0);
+        encoder.set_buffer(1, Some(&roi_distances_buf), 0);
+        encoder.set_buffer(2, Some(&roi_node_ids_buf), 0);
+        encoder.set_buffer(3, Some(&roi_count_buf), 0);
+        encoder.set_buffer(4, Some(&node_x_buf), 0);
+        encoder.set_buffer(5, Some(&node_y_buf), 0);
+        encoder.set_buffer(6, Some(&node_z_buf), 0);
+        encoder.set_buffer(7, Some(&roi_bounds_buf), 0);
+
+        let grid_size = MTLSize::new(num_nodes.max(1) as u64, 1, 1);
+        let tg_size = MTLSize::new(
+            512u64.min(self.roi_pipeline.max_total_threads_per_threadgroup()), 1, 1,
+        );
+        encoder.dispatch_threads(grid_size, tg_size);
+        encoder.pop_debug_group();
+        encoder.end_encoding();
+
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+
+        // Read back the count of matched nodes
+        let match_count = unsafe { *(roi_count_buf.contents() as *const u32) } as usize;
+
+        // Copy matched results into NumPy arrays
+        let dist_ptr = roi_distances_buf.contents() as *const f32;
+        let ids_ptr = roi_node_ids_buf.contents() as *const u32;
+
+        let dist_slice = unsafe { std::slice::from_raw_parts(dist_ptr, match_count) };
+        let ids_slice = unsafe { std::slice::from_raw_parts(ids_ptr, match_count) };
+
+        // Convert u32 node IDs to i32 for Python compatibility
+        let ids_i32: Vec<i32> = ids_slice.iter().map(|&id| id as i32).collect();
+
+        let py_distances = PyArray1::from_slice(py, dist_slice);
+        let py_node_ids = PyArray1::from_slice(py, &ids_i32);
+
+        println!("[Metal-Exec] ROI extraction complete: {} nodes matched", match_count);
+
+        Ok((py_distances.into_any(), py_node_ids.into_any()))
     }
 
-    pub fn process_vias(&self) -> PyResult<()> {
-        println!("[Metal-Exec] Dispatching Via processing...");
-        Ok(())
+    /// Dispatch the via cost computation kernel on the Metal GPU.
+    ///
+    /// Accepts per-via capacity and usage arrays plus a base cost multiplier,
+    /// dispatches the `via_kernels` kernel, and returns the computed via costs
+    /// as a NumPy float32 array.
+    ///
+    /// Cost rules (matching CUDA behavior):
+    ///   - usage >= capacity → INFINITY (hard-block)
+    ///   - 0 < usage < capacity → base_cost * (1 + usage/capacity)
+    ///   - usage == 0 → base_cost
+    pub fn process_vias<'py>(
+        &self,
+        py: Python<'py>,
+        via_capacity: PyReadonlyArray1<'py, f32>,
+        via_usage: PyReadonlyArray1<'py, f32>,
+        base_cost: f32,
+    ) -> PyResult<Bound<'py, pyo3::types::PyAny>> {
+        let cap_slice = via_capacity.as_slice()
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("via_capacity not contiguous: {}", e)))?;
+        let usage_slice = via_usage.as_slice()
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("via_usage not contiguous: {}", e)))?;
+
+        let num_vias = cap_slice.len();
+        if usage_slice.len() != num_vias {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "via_capacity ({}) and via_usage ({}) must have the same length",
+                num_vias, usage_slice.len()
+            )));
+        }
+
+        let options = MTLResourceOptions::StorageModeShared;
+
+        // Output buffer for computed via costs
+        let via_costs_buf = self.device.new_buffer(
+            (num_vias * mem::size_of::<f32>()) as u64, options,
+        );
+
+        // Input buffers (zero-copy via UMA)
+        let cap_buf = self.device.new_buffer_with_bytes_no_copy(
+            cap_slice.as_ptr() as *const _,
+            (num_vias * mem::size_of::<f32>()) as u64,
+            options,
+            None,
+        );
+        let usage_buf = self.device.new_buffer_with_bytes_no_copy(
+            usage_slice.as_ptr() as *const _,
+            (num_vias * mem::size_of::<f32>()) as u64,
+            options,
+            None,
+        );
+
+        // Dispatch the via_kernels kernel
+        let command_buffer = self.command_queue.new_command_buffer();
+        let encoder = command_buffer.new_compute_command_encoder();
+        encoder.push_debug_group("Via Cost Computation");
+        encoder.set_compute_pipeline_state(&self.via_pipeline);
+        encoder.set_buffer(0, Some(&via_costs_buf), 0);
+        encoder.set_buffer(1, Some(&cap_buf), 0);
+        encoder.set_buffer(2, Some(&usage_buf), 0);
+        encoder.set_bytes(3, mem::size_of::<f32>() as u64, &base_cost as *const f32 as *const _);
+
+        let grid_size = MTLSize::new(num_vias.max(1) as u64, 1, 1);
+        let tg_size = MTLSize::new(
+            512u64.min(self.via_pipeline.max_total_threads_per_threadgroup()), 1, 1,
+        );
+        encoder.dispatch_threads(grid_size, tg_size);
+        encoder.pop_debug_group();
+        encoder.end_encoding();
+
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+
+        // Read back computed via costs into a NumPy array
+        let costs_ptr = via_costs_buf.contents() as *const f32;
+        let costs_slice = unsafe { std::slice::from_raw_parts(costs_ptr, num_vias) };
+        let py_costs = PyArray1::from_slice(py, costs_slice);
+
+        println!("[Metal-Exec] Via processing complete: {} vias computed", num_vias);
+
+        Ok(py_costs.into_any())
     }
 }
 
