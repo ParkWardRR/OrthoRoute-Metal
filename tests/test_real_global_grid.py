@@ -191,7 +191,7 @@ def test_epoch_visited_mark_and_check():
     """Marked node is recognized in current epoch."""
     ev = EpochVisited(100)
     ev.mark(5)
-    assert ev.is_marked(5) is True
+    assert ev.is_marked(5) == True
 
 
 def test_epoch_visited_new_epoch_clears():
@@ -199,7 +199,7 @@ def test_epoch_visited_new_epoch_clears():
     ev = EpochVisited(100)
     ev.mark(5)
     ev.new_epoch()
-    assert ev.is_marked(5) is False
+    assert ev.is_marked(5) == False
 
 
 def test_epoch_visited_oob_safe():
