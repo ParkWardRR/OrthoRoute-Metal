@@ -1,8 +1,13 @@
 """CPU fallback provider implementation."""
+from __future__ import annotations
+
 import logging
-import psutil
-from typing import Optional, Dict, Any, Tuple
+from types import TracebackType
+from typing import Optional, Dict, Any, Tuple, Type
+
 import numpy as np
+import numpy.typing as npt
+import psutil
 
 from ...application.interfaces.gpu_provider import GPUProvider
 
@@ -12,11 +17,11 @@ logger = logging.getLogger(__name__)
 class CPUFallbackProvider(GPUProvider):
     """CPU-only fallback implementation of GPU provider."""
     
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize CPU fallback provider."""
-        self._initialized = False
-        self._memory_limit = None
-        self._allocated_arrays = []
+        self._initialized: bool = False
+        self._memory_limit: Optional[int] = None
+        self._allocated_arrays: list[npt.NDArray[np.generic]] = []
     
     def is_available(self) -> bool:
         """CPU is always available."""
@@ -94,7 +99,7 @@ class CPUFallbackProvider(GPUProvider):
                 'memory_pool_total': 0
             }
     
-    def create_array(self, shape: Tuple[int, ...], dtype=None, fill_value=None) -> np.ndarray:
+    def create_array(self, shape: Tuple[int, ...], dtype: Optional[np.dtype[Any]] = None, fill_value: Optional[float] = None) -> npt.NDArray[Any]:
         """Create array in CPU memory."""
         if not self._initialized:
             raise RuntimeError("CPU provider not initialized")
@@ -131,7 +136,7 @@ class CPUFallbackProvider(GPUProvider):
             logger.error(f"Error creating CPU array: {e}")
             raise
     
-    def copy_array(self, array: np.ndarray) -> np.ndarray:
+    def copy_array(self, array: npt.NDArray[Any]) -> npt.NDArray[Any]:
         """Create copy of array in CPU memory."""
         if not self._initialized:
             raise RuntimeError("CPU provider not initialized")
@@ -145,11 +150,11 @@ class CPUFallbackProvider(GPUProvider):
             logger.error(f"Error copying CPU array: {e}")
             raise
     
-    def to_cpu(self, array: np.ndarray) -> np.ndarray:
+    def to_cpu(self, array: npt.NDArray[Any]) -> npt.NDArray[Any]:
         """Array is already on CPU."""
         return array
     
-    def to_gpu(self, array: np.ndarray) -> np.ndarray:
+    def to_gpu(self, array: npt.NDArray[Any]) -> npt.NDArray[Any]:
         """No-op for CPU fallback."""
         return array
     
@@ -157,12 +162,17 @@ class CPUFallbackProvider(GPUProvider):
         """No-op for CPU (operations are synchronous)."""
         pass
     
-    def __enter__(self):
+    def __enter__(self) -> CPUFallbackProvider:
         """Context manager entry."""
         self.initialize()
         return self
     
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> None:
         """Context manager exit."""
         self.cleanup()
 

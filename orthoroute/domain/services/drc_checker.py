@@ -1,6 +1,8 @@
 """Domain service for design rule checking."""
-from typing import List, Dict, Tuple, Optional
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import Any, List, Dict, Tuple, Optional
 
 from ..models.board import Board, Coordinate, Pad, Component
 from ..models.routing import Route, Segment, Via
@@ -17,7 +19,7 @@ class DRCViolation:
     net_id: Optional[str] = None
     component_id: Optional[str] = None
     
-    def __str__(self):
+    def __str__(self) -> str:
         location_str = f" at ({self.location.x:.3f}, {self.location.y:.3f})" if self.location else ""
         return f"{self.severity.upper()}: {self.message}{location_str}"
 
@@ -25,9 +27,9 @@ class DRCViolation:
 class DRCChecker:
     """Domain service for design rule checking."""
     
-    def __init__(self, constraints: DRCConstraints):
+    def __init__(self, constraints: DRCConstraints) -> None:
         """Initialize DRC checker with constraints."""
-        self.constraints = constraints
+        self.constraints: DRCConstraints = constraints
     
     def check_board(self, board: Board) -> List[DRCViolation]:
         """Perform comprehensive DRC check on board."""
@@ -263,7 +265,7 @@ class DRCChecker:
         
         return violations
     
-    def _calculate_bounds_distance(self, bounds1, bounds2) -> float:
+    def _calculate_bounds_distance(self, bounds1: Any, bounds2: Any) -> float:
         """Calculate minimum distance between two rectangular bounds."""
         # Simplified distance calculation
         dx = max(0, max(bounds1.min_x - bounds2.max_x, bounds2.min_x - bounds1.max_x))
@@ -276,7 +278,7 @@ class DRCChecker:
         # Real implementation would calculate true line-to-line distance
         return seg1.start.distance_to(seg2.start)
     
-    def generate_drc_report(self, violations: List[DRCViolation]) -> Dict[str, any]:
+    def generate_drc_report(self, violations: List[DRCViolation]) -> Dict[str, Any]:
         """Generate a comprehensive DRC report."""
         report = {
             'total_violations': len(violations),

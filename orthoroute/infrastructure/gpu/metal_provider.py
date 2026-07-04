@@ -1,8 +1,18 @@
-"""Metal GPU provider implementation for Apple Silicon."""
+"""Metal GPU provider implementation for Apple Silicon.
+
+Provides full CUDA-parity GPU acceleration via orthoroute_mac (PyO3/Rust),
+including:
+  - Shortest-path computation (Δ-stepping SPFA on Metal)
+  - Hard-block via capacity enforcement
+  - Via pooling penalty application
+  - Via barrel conflict detection
+  - Owner-aware via keepout blocking
+  - Spatial-index-based ROI subgraph extraction
+"""
 import logging
 import platform
 import psutil
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 import numpy as np
 
 from ...application.interfaces.gpu_provider import GPUProvider
@@ -348,7 +358,7 @@ class MetalProvider(GPUProvider):
         node_y: np.ndarray,
         node_z: np.ndarray,
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Extract distances for nodes within an ROI bounding box.
+        """Extract distances for nodes within an ROI bounding box (legacy).
 
         Dispatches the roi_extractor_mixin Metal kernel to filter distances
         by spatial region of interest.
@@ -381,7 +391,7 @@ class MetalProvider(GPUProvider):
         via_usage: np.ndarray,
         base_cost: float = 1.0,
     ) -> np.ndarray:
-        """Compute via costs on the Metal GPU.
+        """Compute via costs on the Metal GPU (legacy simple model).
 
         Dispatches the via_kernels Metal kernel to compute costs based on
         capacity and current usage:
@@ -404,6 +414,323 @@ class MetalProvider(GPUProvider):
         via_usage = np.ascontiguousarray(via_usage, dtype=np.float32)
 
         return self._metal_dijkstra.process_vias(via_capacity, via_usage, base_cost)
+
+    # =========================================================================
+    # CUDA-Parity Via Kernels (matching ViaKernelManager interface)
+    # =========================================================================
+
+    def hard_block_via_edges(
+        self,
+        via_metadata: Dict,
+        via_col_use: np.ndarray,
+        via_col_cap: np.ndarray,
+        via_seg_use: Optional[np.ndarray],
+        via_seg_cap: Optional[np.ndarray],
+        total_cost: np.ndarray,
+        Ny: int,
+        segZ: int,
+    ) -> int:
+        """GPU kernel: Hard-block via edges at capacity.
+
+        Matches ViaKernelManager.hard_block_via_edges() from via_kernels.py.
+        Checks BOTH column capacity AND per-segment capacity. If a column
+        or any spanned segment is at capacity, the edge cost is set to INFINITY.
+
+        Args:
+            via_metadata: Dict with 'indices', 'xy_coords', 'z_lo', 'z_hi' (NumPy arrays)
+            via_col_use: Column usage array [Nx, Ny] (int16)
+            via_col_cap: Column capacity array [Nx, Ny] (int16)
+            via_seg_use: Segment usage array [Nx, Ny, segZ] (int8, or None)
+            via_seg_cap: Segment capacity array [Nx, Ny, segZ] (int8, or None)
+            total_cost: Total cost array (float32, modified in-place)
+            Ny: Y grid dimension
+            segZ: Number of segments
+
+        Returns:
+            Number of edges blocked
+        """
+        if not self._initialized or self._metal_dijkstra is None:
+            raise RuntimeError("Metal provider not initialized")
+
+        edge_indices = np.ascontiguousarray(via_metadata['indices'], dtype=np.int32)
+        xy_coords = np.ascontiguousarray(via_metadata['xy_coords'].ravel(), dtype=np.int32)
+        z_lo = np.ascontiguousarray(via_metadata['z_lo'], dtype=np.int32)
+        z_hi = np.ascontiguousarray(via_metadata['z_hi'], dtype=np.int32)
+
+        num_via_edges = len(edge_indices)
+        if num_via_edges == 0:
+            return 0
+
+        # Ensure correct dtypes and flatten for Metal
+        via_col_use = np.ascontiguousarray(via_col_use.ravel(), dtype=np.int16)
+        via_col_cap = np.ascontiguousarray(via_col_cap.ravel(), dtype=np.int16)
+
+        if via_seg_use is None:
+            via_seg_use = np.zeros(1, dtype=np.int8)
+        else:
+            via_seg_use = np.ascontiguousarray(via_seg_use.ravel(), dtype=np.int8)
+
+        if via_seg_cap is None:
+            via_seg_cap = np.zeros(1, dtype=np.int8)
+        else:
+            via_seg_cap = np.ascontiguousarray(via_seg_cap.ravel(), dtype=np.int8)
+
+        total_cost = np.ascontiguousarray(total_cost, dtype=np.float32)
+
+        blocked = self._metal_dijkstra.hard_block_via_edges(
+            edge_indices, xy_coords, z_lo, z_hi,
+            via_col_use, via_col_cap, via_seg_use, via_seg_cap,
+            total_cost, Ny, segZ
+        )
+
+        logger.info(f"[HARD-BLOCK-METAL] Blocked {blocked} via edges")
+        return blocked
+
+    def apply_via_pooling_penalties(
+        self,
+        via_metadata: Dict,
+        via_col_pres: np.ndarray,
+        via_seg_pres: Optional[np.ndarray],
+        col_weight: float,
+        seg_weight: float,
+        total_cost: np.ndarray,
+        Ny: int,
+        segZ: int,
+    ) -> int:
+        """GPU kernel: Apply via pooling penalties.
+
+        Matches ViaKernelManager.apply_via_penalties() from via_kernels.py.
+        Calculates column penalty + sum of segment penalties for each via edge,
+        and atomically adds the penalty to the edge's total cost.
+
+        Args:
+            via_metadata: Dict with via edge metadata (NumPy arrays)
+            via_col_pres: Column present congestion [Nx, Ny] (float32)
+            via_seg_pres: Segment present congestion [Nx, Ny, segZ] (float32, or None)
+            col_weight: Column penalty weight
+            seg_weight: Segment penalty weight
+            total_cost: Total cost array (float32, modified in-place)
+            Ny: Y grid dimension
+            segZ: Number of segments
+
+        Returns:
+            Number of penalties applied
+        """
+        if not self._initialized or self._metal_dijkstra is None:
+            raise RuntimeError("Metal provider not initialized")
+
+        edge_indices = np.ascontiguousarray(via_metadata['indices'], dtype=np.int32)
+        xy_coords = np.ascontiguousarray(via_metadata['xy_coords'].ravel(), dtype=np.int32)
+        z_lo = np.ascontiguousarray(via_metadata['z_lo'], dtype=np.int32)
+        z_hi = np.ascontiguousarray(via_metadata['z_hi'], dtype=np.int32)
+
+        num_via_edges = len(edge_indices)
+        if num_via_edges == 0:
+            return 0
+
+        via_col_pres = np.ascontiguousarray(via_col_pres.ravel(), dtype=np.float32)
+
+        if via_seg_pres is None:
+            via_seg_pres = np.zeros(1, dtype=np.float32)
+        else:
+            via_seg_pres = np.ascontiguousarray(via_seg_pres.ravel(), dtype=np.float32)
+
+        total_cost = np.ascontiguousarray(total_cost, dtype=np.float32)
+
+        penalties = self._metal_dijkstra.apply_via_pooling_penalties(
+            edge_indices, xy_coords, z_lo, z_hi,
+            via_col_pres, via_seg_pres, total_cost,
+            col_weight, seg_weight, Ny, segZ
+        )
+
+        logger.info(f"[VIA-PENALTY-METAL] Applied {penalties} penalties")
+        return penalties
+
+    def detect_barrel_conflicts(
+        self,
+        edge_indices: np.ndarray,
+        edge_net_ids: np.ndarray,
+        edge_src_map: np.ndarray,
+        graph_indices: np.ndarray,
+        node_owner: np.ndarray,
+    ) -> int:
+        """GPU kernel: Detect via barrel conflicts in committed paths.
+
+        Matches ViaKernelManager.detect_barrel_conflicts_gpu() from via_kernels.py.
+        Detects when committed edges touch via barrel nodes owned by other nets.
+
+        Args:
+            edge_indices: Edge indices to check (int32)
+            edge_net_ids: Net ID for each edge (int32)
+            edge_src_map: Precomputed edge → src node mapping (int32)
+            graph_indices: CSR graph indices array (int32)
+            node_owner: Node ownership array, -1=free (int32)
+
+        Returns:
+            Number of barrel conflicts detected
+        """
+        if not self._initialized or self._metal_dijkstra is None:
+            raise RuntimeError("Metal provider not initialized")
+
+        edge_indices = np.ascontiguousarray(edge_indices, dtype=np.int32)
+        edge_net_ids = np.ascontiguousarray(edge_net_ids, dtype=np.int32)
+        edge_src_map = np.ascontiguousarray(edge_src_map, dtype=np.int32)
+        graph_indices = np.ascontiguousarray(graph_indices, dtype=np.int32)
+        node_owner = np.ascontiguousarray(node_owner, dtype=np.int32)
+
+        if len(edge_indices) == 0:
+            return 0
+
+        conflicts = self._metal_dijkstra.detect_barrel_conflicts(
+            edge_indices, edge_net_ids, edge_src_map,
+            graph_indices, node_owner
+        )
+
+        logger.info(f"[BARREL-CONFLICT-METAL] Detected {conflicts} conflicts")
+        return conflicts
+
+    def block_via_keepouts(
+        self,
+        via_keepout_nodes: np.ndarray,
+        via_keepout_owners: np.ndarray,
+        indptr: np.ndarray,
+        indices: np.ndarray,
+        node_coords_z: np.ndarray,
+        costs: np.ndarray,
+        current_net_id: int,
+        block_cost: float = 1e30,
+    ) -> int:
+        """GPU kernel: Owner-aware via keepout blocking.
+
+        Blocks outgoing planar edges from via keepout nodes owned by other nets.
+        Skips keepouts owned by the current net (owner-aware).
+
+        Args:
+            via_keepout_nodes: Node indices occupied by vias (int32)
+            via_keepout_owners: Owner net IDs (int32)
+            indptr: Graph CSR indptr (int32)
+            indices: Graph CSR indices (int32)
+            node_coords_z: Z coordinate for each node (int32)
+            costs: Cost array (float32, modified in-place)
+            current_net_id: Current net being routed (int)
+            block_cost: Cost to set for blocked edges (float)
+
+        Returns:
+            Number of edges blocked
+        """
+        if not self._initialized or self._metal_dijkstra is None:
+            raise RuntimeError("Metal provider not initialized")
+
+        via_keepout_nodes = np.ascontiguousarray(via_keepout_nodes, dtype=np.int32)
+        via_keepout_owners = np.ascontiguousarray(via_keepout_owners, dtype=np.int32)
+        indptr = np.ascontiguousarray(indptr, dtype=np.int32)
+        indices = np.ascontiguousarray(indices, dtype=np.int32)
+        node_coords_z = np.ascontiguousarray(node_coords_z, dtype=np.int32)
+        costs = np.ascontiguousarray(costs, dtype=np.float32)
+
+        if len(via_keepout_nodes) == 0:
+            return 0
+
+        blocked = self._metal_dijkstra.block_via_keepouts(
+            via_keepout_nodes, via_keepout_owners,
+            indptr, indices, node_coords_z, costs,
+            current_net_id, block_cost
+        )
+
+        logger.info(f"[KEEPOUT-METAL] Blocked {blocked} edges for {len(via_keepout_nodes)} keepouts")
+        return blocked
+
+    def extract_roi_subgraph(
+        self,
+        spatial_indptr: np.ndarray,
+        spatial_node_ids: np.ndarray,
+        csr_indptr: np.ndarray,
+        csr_indices: np.ndarray,
+        csr_weights: np.ndarray,
+        grid_x0: int, grid_y0: int,
+        grid_x1: int, grid_y1: int,
+        grid_width: int, grid_height: int,
+        max_layers: int, max_cell_id: int,
+        total_nodes: int,
+    ) -> Tuple[np.ndarray, Dict[int, int], Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        """GPU kernel: Spatial-index-based ROI subgraph extraction.
+
+        Matches the CUDA roi_extractor_mixin._extract_roi_subgraph_gpu() behavior.
+        Uses a pre-built spatial grid index to:
+        1. Mark nodes within ROI bounds (O(1) per grid cell)
+        2. Extract complete CSR subgraph for marked nodes
+
+        Args:
+            spatial_indptr: Spatial index CSR indptr (int32)
+            spatial_node_ids: Node IDs in spatial index (int32)
+            csr_indptr: Global graph CSR indptr (int32)
+            csr_indices: Global graph CSR column indices (int32)
+            csr_weights: Global graph CSR edge weights (float32)
+            grid_x0, grid_y0: ROI grid bounds (lower)
+            grid_x1, grid_y1: ROI grid bounds (upper)
+            grid_width, grid_height: Grid dimensions
+            max_layers: Number of layers
+            max_cell_id: Maximum spatial cell ID
+            total_nodes: Total number of nodes in the graph
+
+        Returns:
+            Tuple of:
+              - roi_nodes: List of global node indices within ROI
+              - global_to_local: Dict mapping global → local indices
+              - (roi_indptr, roi_indices, roi_weights): CSR representation
+        """
+        if not self._initialized or self._metal_dijkstra is None:
+            raise RuntimeError("Metal provider not initialized")
+
+        # Validate grid window
+        if grid_x1 <= grid_x0 or grid_y1 <= grid_y0:
+            logger.warning(f"Empty grid window: ({grid_x0}, {grid_y0}) to ({grid_x1}, {grid_y1})")
+            return (
+                [],
+                {},
+                (np.array([0], dtype=np.int32),
+                 np.array([], dtype=np.int32),
+                 np.array([], dtype=np.float32))
+            )
+
+        # Ensure correct dtypes
+        spatial_indptr = np.ascontiguousarray(spatial_indptr, dtype=np.int32)
+        spatial_node_ids = np.ascontiguousarray(spatial_node_ids, dtype=np.int32)
+        csr_indptr = np.ascontiguousarray(csr_indptr, dtype=np.int32)
+        csr_indices = np.ascontiguousarray(csr_indices, dtype=np.int32)
+        csr_weights = np.ascontiguousarray(csr_weights, dtype=np.float32)
+
+        # Dispatch to Metal backend
+        roi_node_ids, roi_indptr, roi_indices, roi_weights = (
+            self._metal_dijkstra.extract_roi_subgraph(
+                spatial_indptr, spatial_node_ids,
+                csr_indptr, csr_indices, csr_weights,
+                grid_x0, grid_y0, grid_x1, grid_y1,
+                grid_width, grid_height,
+                max_layers, max_cell_id, total_nodes,
+            )
+        )
+
+        # Convert to NumPy arrays
+        roi_node_ids = np.asarray(roi_node_ids, dtype=np.int32)
+        roi_indptr = np.asarray(roi_indptr, dtype=np.int32)
+        roi_indices = np.asarray(roi_indices, dtype=np.int32)
+        roi_weights = np.asarray(roi_weights, dtype=np.float32)
+
+        # Build global-to-local mapping dict
+        roi_nodes_list = roi_node_ids.tolist()
+        global_to_local = {int(g): i for i, g in enumerate(roi_nodes_list)}
+
+        logger.info(
+            f"[ROI-METAL] Extracted {len(roi_nodes_list)} nodes, "
+            f"{len(roi_indices)} edges"
+        )
+
+        return (
+            roi_nodes_list,
+            global_to_local,
+            (roi_indptr, roi_indices, roi_weights)
+        )
 
     def __enter__(self):
         """Context manager entry."""

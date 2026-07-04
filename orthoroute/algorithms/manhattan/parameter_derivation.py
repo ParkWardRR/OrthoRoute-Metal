@@ -5,8 +5,10 @@ Derives optimal routing parameters from board characteristics.
 Eliminates manual tuning - parameters scale with board complexity.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 import logging
 
 from .board_analyzer import BoardCharacteristics
@@ -239,7 +241,7 @@ def derive_routing_parameters(board: BoardCharacteristics) -> DerivedRoutingPara
     )
 
 
-def apply_derived_parameters(config, derived: DerivedRoutingParameters):
+def apply_derived_parameters(config: Any, derived: DerivedRoutingParameters) -> None:
     """
     Apply derived parameters to PathFinderConfig.
     Modifies config in-place.

@@ -4,27 +4,29 @@ Spatial Hash Module
 Simple spatial hash grid for fast DRC collision detection.
 """
 
+from __future__ import annotations
+
 from collections import defaultdict
-from typing import Optional
+from typing import Any, Optional
 
 
 class SpatialHash:
     """Simple spatial hash for fast DRC collision detection"""
 
-    def __init__(self, cell_size: float):
+    def __init__(self, cell_size: float) -> None:
         """Initialize spatial hash grid for collision detection.
 
         Args:
             cell_size: Size of each grid cell in mm for spatial partitioning
         """
-        self.cell_size = cell_size
-        self.grid = defaultdict(list)  # cell_id -> list of segments
+        self.cell_size: float = cell_size
+        self.grid: defaultdict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)  # cell_id -> list of segments
 
-    def _hash_point(self, x: float, y: float) -> tuple:
+    def _hash_point(self, x: float, y: float) -> tuple[int, int]:
         """Hash point to grid cell"""
         return (int(x // self.cell_size), int(y // self.cell_size))
 
-    def _get_cells_for_segment(self, p1: tuple, p2: tuple, radius: float) -> set:
+    def _get_cells_for_segment(self, p1: tuple[float, float], p2: tuple[float, float], radius: float) -> set[tuple[int, int]]:
         """Get all grid cells that a segment with radius might touch"""
         x1, y1 = p1
         x2, y2 = p2
@@ -41,24 +43,24 @@ class SpatialHash:
         min_cell_y = int(min_y // self.cell_size)
         max_cell_y = int(max_y // self.cell_size)
 
-        cells = set()
+        cells: set[tuple[int, int]] = set()
         for cx in range(min_cell_x, max_cell_x + 1):
             for cy in range(min_cell_y, max_cell_y + 1):
                 cells.add((cx, cy))
         return cells
 
-    def insert_segment(self, p1: tuple, p2: tuple, radius: float, tag: str):
+    def insert_segment(self, p1: tuple[float, float], p2: tuple[float, float], radius: float, tag: str) -> None:
         """Insert segment into spatial hash"""
         cells = self._get_cells_for_segment(p1, p2, radius)
-        segment_data = {'p1': p1, 'p2': p2, 'radius': radius, 'tag': tag}
+        segment_data: dict[str, Any] = {'p1': p1, 'p2': p2, 'radius': radius, 'tag': tag}
 
         for cell in cells:
             self.grid[cell].append(segment_data)
 
-    def query_segment(self, p1: tuple, p2: tuple, radius: float) -> list:
+    def query_segment(self, p1: tuple[float, float], p2: tuple[float, float], radius: float) -> list[Any]:
         """Query segments that might conflict with given segment"""
         cells = self._get_cells_for_segment(p1, p2, radius)
-        candidates = []
+        candidates: list[Any] = []
 
         for cell in cells:
             for segment in self.grid.get(cell, []):
@@ -67,10 +69,10 @@ class SpatialHash:
 
         return candidates
 
-    def nearest_distance(self, p1: tuple, p2: tuple, exclude_net: str, cap: float) -> Optional[float]:
+    def nearest_distance(self, p1: tuple[float, float], p2: tuple[float, float], exclude_net: str, cap: float) -> Optional[float]:
         """Find nearest distance to other nets (simplified implementation)"""
         cells = self._get_cells_for_segment(p1, p2, cap)
-        min_dist = None
+        min_dist: Optional[float] = None
 
         for cell in cells:
             for segment in self.grid.get(cell, []):

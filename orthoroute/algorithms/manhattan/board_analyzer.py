@@ -5,8 +5,10 @@ Analyzes PCB characteristics to derive optimal routing parameters.
 Computes capacity, demand, congestion ratio, and layer assignments.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Dict, List, Set, Tuple, Optional
+from typing import Any, Dict, List, Set, Tuple, Optional
 import numpy as np
 import logging
 
@@ -56,9 +58,9 @@ class BoardCharacteristics:
 
 
 def analyze_board_characteristics(
-    lattice,
-    tasks: Dict,
-    board_data: Optional[Dict] = None
+    lattice: Any,
+    tasks: Dict[str, Tuple[int, int]],
+    board_data: Optional[Dict[str, Any]] = None
 ) -> BoardCharacteristics:
     """
     Analyze board and compute routing characteristics.
@@ -217,8 +219,8 @@ def analyze_board_characteristics(
 
 def _assign_hv_layers_by_demand(
     signal_layers: List[int],
-    tasks: Dict,
-    lattice,
+    tasks: Dict[str, Tuple[int, int]],
+    lattice: Any,
     anchor_top_is_h: bool = True
 ) -> Tuple[Set[int], Set[int], float]:
     """

@@ -1,8 +1,11 @@
 """
 Layer Analyzer - Determines if board is routable with current layer count
 """
+
+from __future__ import annotations
+
 import logging
-from typing import Tuple, Dict, List
+from typing import Any, Dict, List, Tuple
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)
@@ -11,12 +14,12 @@ logger = logging.getLogger(__name__)
 class LayerAnalyzer:
     """Analyzes routing layer utilization and provides recommendations"""
 
-    def __init__(self, layer_count: int):
-        self.layer_count = layer_count
-        self.layer_usage = defaultdict(int)  # edges used per layer
-        self.layer_capacity = defaultdict(int)  # total capacity per layer
+    def __init__(self, layer_count: int) -> None:
+        self.layer_count: int = layer_count
+        self.layer_usage: defaultdict[int, int] = defaultdict(int)  # edges used per layer
+        self.layer_capacity: defaultdict[int, int] = defaultdict(int)  # total capacity per layer
 
-    def analyze_routing(self, accounting, graph) -> Dict:
+    def analyze_routing(self, accounting: Any, graph: Any) -> Dict[str, Any]:
         """Analyze current routing state and determine if more layers needed"""
 
         # Calculate per-layer statistics
@@ -58,7 +61,7 @@ class LayerAnalyzer:
             'reason': needs_more_layers['reason']
         }
 
-    def _get_layer_edges(self, layer_idx: int, graph, lattice) -> List:
+    def _get_layer_edges(self, layer_idx: int, graph: Any, lattice: Any) -> List[int]:
         """Get all edges belonging to a specific layer"""
         layer_edges = []
 
@@ -83,7 +86,7 @@ class LayerAnalyzer:
 
         return layer_edges
 
-    def _calculate_layer_recommendation(self, layer_stats: Dict, total_overuse: int) -> Dict:
+    def _calculate_layer_recommendation(self, layer_stats: Dict[int, Dict[str, Any]], total_overuse: int) -> Dict[str, Any]:
         """Calculate if more layers are needed and how many"""
 
         # Strategy: If overuse is concentrated and all layers are >80% utilized,
