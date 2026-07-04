@@ -5,6 +5,7 @@ import platform
 from .cuda_provider import CUDAProvider
 from .cpu_fallback import CPUFallbackProvider, CPUProvider
 from .metal_provider import MetalProvider
+from .vulkan_provider import VulkanProvider
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +14,7 @@ __all__ = [
     'CPUFallbackProvider',
     'CPUProvider',
     'MetalProvider',
+    'VulkanProvider',
     'get_best_provider',
 ]
 
@@ -23,7 +25,8 @@ def get_best_provider():
     Selection priority:
     1. CUDA (NVIDIA GPUs via CuPy) — if CuPy is installed and a CUDA GPU is present
     2. Metal (Apple Silicon GPUs) — if on macOS arm64 with orthoroute_mac compiled
-    3. CPU fallback — always available
+    3. Vulkan (Linux/Windows GPUs) — if orthoroute_vulkan is compiled (future)
+    4. CPU fallback — always available
 
     Returns:
         An instance of the best available GPUProvider subclass.
@@ -47,6 +50,15 @@ def get_best_provider():
         except Exception as e:
             logger.debug(f"Metal detection failed: {e}")
 
-    # 3. CPU fallback (always available)
+    # 3. Try Vulkan (Linux/Windows with Vulkan-capable GPUs)
+    try:
+        vulkan = VulkanProvider()
+        if vulkan.is_available():
+            logger.info("Auto-detected Vulkan GPU — using VulkanProvider")
+            return vulkan
+    except Exception as e:
+        logger.debug(f"Vulkan detection failed: {e}")
+
+    # 4. CPU fallback (always available)
     logger.info("No GPU acceleration available — using CPUFallbackProvider")
     return CPUFallbackProvider()

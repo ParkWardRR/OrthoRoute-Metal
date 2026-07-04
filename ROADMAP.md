@@ -323,6 +323,16 @@
 - [ ] **Homebrew formula** — `brew install orthoroute`
 - [ ] **KiCad PCM listing** — Official PCM repository inclusion (pending KiCad IPC bug fix)
 
+### Vulkan Compute Backend
+
+> Stub infrastructure created in `vulkan/` — see [`vulkan/README.md`](vulkan/README.md) for full details.
+
+- [ ] **SPIR-V compute shaders** — 7 kernels matching Metal MSL (`wavefront_expand_all`, `wavefront_expand_multi`, `spfa_setup`, `clear_counters`, `negotiation`, `roi_extractor`, `via_kernels`)
+- [ ] **ash/vulkano Rust bindings with PyO3 bridge** — `VulkanDijkstra` struct in `vulkan/src/lib.rs` (stub created)
+- [ ] **VulkanProvider Python wrapper** — `orthoroute/infrastructure/gpu/vulkan_provider.py` (stub created)
+- [ ] **Linux GPU auto-detection** — Vulkan → CPU fallback in `gpu/__init__.py` (wiring created, `is_available()` returns False)
+- [ ] **CI testing on Linux with Vulkan SDK** — GitHub Actions or OrbStack pipeline with Vulkan SDK installed
+
 ---
 
 ## Summary
@@ -339,7 +349,7 @@
 | Testing | 13 | 0 | 6 | **19** |
 | Performance | 5 | 0 | 5 | **10** |
 | Refactoring | 7 | 0 | 1 | **8** |
-| Future Features | 0 | 0 | 17 | **17** |
-| **TOTAL** | **133** | **0** | **32** | **165** |
+| Future Features | 0 | 0 | 22 | **22** |
+| **TOTAL** | **133** | **0** | **37** | **170** |
 
-> **Overall completion: ~81%** — All stubs are fully implemented. The Metal GPU backend is fully integrated into the Python routing pipeline via `MetalProvider` with CUDA→Metal→CPU automatic fallback. All 7 Metal kernels have full feature parity with their CUDA equivalents. The unit test suite covers core infrastructure with 18 test files (286 tests passing). Configuration is consolidated via `PathFinderConfig.from_env()`/`from_json()`/`merge()`. Magic numbers extracted to `constants.py`. Remaining work is primarily future features (layer compaction, differential pair routing, platform distribution), advanced testing, and the large-file decomposition of `unified_pathfinder.py`.
+> **Overall completion: ~78%** — All stubs are fully implemented. The Metal GPU backend is fully integrated into the Python routing pipeline via `MetalProvider` with CUDA→Metal→Vulkan→CPU automatic fallback. All 7 Metal kernels have full feature parity with their CUDA equivalents. The unit test suite covers core infrastructure with 18 test files (286 tests passing). Configuration is consolidated via `PathFinderConfig.from_env()`/`from_json()`/`merge()`. Magic numbers extracted to `constants.py`. Remaining work is primarily future features (layer compaction, differential pair routing, Vulkan compute backend, platform distribution), advanced testing, and the large-file decomposition of `unified_pathfinder.py`. Vulkan compute backend stub infrastructure is in place (`vulkan/`, `VulkanProvider`).

@@ -1,0 +1,34 @@
+[package]
+name = "orthoroute-vulkan"
+version = "0.1.0"
+edition = "2021"
+description = "Vulkan compute backend for OrthoRoute PCB autorouter — SPIR-V compute shaders with Rust bindings for GPU-accelerated shortest-path graph traversal on Linux/Windows Vulkan-capable GPUs."
+repository = "https://github.com/ParkWardRR/OrthoRoute-Metal"
+license = "BlueOak-1.0.0"
+keywords = ["vulkan", "gpu", "pcb", "autorouter", "spir-v", "shortest-path", "graph-algorithms"]
+categories = ["science", "hardware-support", "algorithms"]
+readme = "README.md"
+
+[lib]
+name = "orthoroute_vulkan"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+pyo3 = { version = "0.29", features = ["extension-module"] }
+numpy = "0.29.0"
+
+# ── Vulkan bindings (uncomment when implementation begins) ──────────────
+# Choose ONE of the following Vulkan crate strategies:
+#
+# Option A: ash (low-level, unsafe, maximum control)
+#   Recommended if you need fine-grained control over descriptor sets,
+#   command buffers, and memory barriers — closer to raw Vulkan API.
+# ash = "0.38"
+#
+# Option B: vulkano (safe wrapper, higher-level)
+#   Recommended for faster development with compile-time safety.
+#   Handles descriptor set layouts, pipeline caching, and memory
+#   allocation automatically.
+# vulkano = "0.34"
+# vulkano-shaders = "0.34"  # Compile-time GLSL → SPIR-V integration
