@@ -5,6 +5,8 @@ Centralized configuration constants and dataclass for PathFinder routing algorit
 All tunable parameters are defined here to avoid scattered magic numbers.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Optional, List, Set, Tuple
 

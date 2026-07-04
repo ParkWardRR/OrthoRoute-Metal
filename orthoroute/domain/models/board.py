@@ -1,4 +1,6 @@
 """Domain models for PCB board structure."""
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple, Any
 from uuid import uuid4
@@ -10,7 +12,7 @@ class Coordinate:
     x: float
     y: float
     
-    def distance_to(self, other: 'Coordinate') -> float:
+    def distance_to(self, other: Coordinate) -> float:
         """Calculate Euclidean distance to another coordinate."""
         return ((self.x - other.x) ** 2 + (self.y - other.y) ** 2) ** 0.5
 
@@ -52,7 +54,7 @@ class Pad:
     shape: str = "circle"
     angle: float = 0.0
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.id:
             self.id = str(uuid4())
 
@@ -69,7 +71,7 @@ class Component:
     layer: str = "F.Cu"
     pads: List[Pad] = field(default_factory=list)
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.id:
             self.id = str(uuid4())
         
@@ -99,7 +101,7 @@ class Net:
     netclass: str = "Default"
     pads: List[Pad] = field(default_factory=list)
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.id:
             self.id = str(uuid4())
         
@@ -172,13 +174,13 @@ class Board:
     _nets_by_name: Dict[str, Net] = field(default_factory=dict, init=False)
     _layers_by_name: Dict[str, Layer] = field(default_factory=dict, init=False)
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.id:
             self.id = str(uuid4())
         
         self._build_indexes()
     
-    def _build_indexes(self):
+    def _build_indexes(self) -> None:
         """Build internal indexes for efficient lookup."""
         self._components_by_id = {comp.id: comp for comp in self.components}
         self._nets_by_id = {net.id: net for net in self.nets}

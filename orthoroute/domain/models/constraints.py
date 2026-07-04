@@ -1,6 +1,8 @@
 """Domain models for design rule constraints."""
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Any
+from typing import Dict, List, Optional, Any
 from enum import Enum
 
 
@@ -27,7 +29,7 @@ class NetClass:
     via_diameter_min: Optional[float] = None
     via_diameter_max: Optional[float] = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Set min/max defaults if not provided
         if self.track_width_min is None:
             object.__setattr__(self, 'track_width_min', self.track_width * 0.5)
@@ -77,7 +79,7 @@ class DRCConstraints:
     # Clearance matrix
     clearance_matrix: Dict[ClearanceType, float] = field(default_factory=dict)
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize default netclass and clearance matrix."""
         if "Default" not in self.netclasses:
             self.netclasses["Default"] = NetClass(
@@ -163,7 +165,7 @@ class DRCConstraints:
         required_clearance = self.get_clearance(clearance_type)
         return distance >= required_clearance
     
-    def get_via_types_allowed(self) -> list:
+    def get_via_types_allowed(self) -> List[str]:
         """Get list of allowed via types."""
         allowed = ["through"]  # Through vias always allowed
         
@@ -202,7 +204,7 @@ class DRCConstraints:
         }
     
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'DRCConstraints':
+    def from_dict(cls, data: Dict[str, Any]) -> DRCConstraints:
         """Create constraints from dictionary."""
         constraints = cls(
             min_track_width=data.get('min_track_width', 0.1),

@@ -4,8 +4,10 @@ PathFinder Data Structures
 Core data structures used throughout the PathFinder routing system.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import List, Optional, Set, Tuple
+from typing import Any, List, Optional, Set, Tuple
 
 
 @dataclass
@@ -38,8 +40,8 @@ class EdgeRec:
 @dataclass
 class Geometry:
     """Geometry container for routing results."""
-    tracks: list = field(default_factory=list)
-    vias: list = field(default_factory=list)
+    tracks: list[Any] = field(default_factory=list)
+    vias: list[Any] = field(default_factory=list)
 
 
 def canonical_edge_key(layer_id: int, u1: int, v1: int, u2: int, v2: int) -> Tuple[int, int, int, int, int]:

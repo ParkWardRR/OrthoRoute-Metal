@@ -1,4 +1,6 @@
 """Domain models for routing structures."""
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import List, Optional, Set, Dict, Any
 from enum import Enum
@@ -83,7 +85,7 @@ class Route:
     segments: List[Segment] = field(default_factory=list)
     vias: List[Via] = field(default_factory=list)
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.id:
             self.id = str(uuid4())
     
@@ -179,7 +181,7 @@ class RoutingResult:
     
     @classmethod
     def success_result(cls, route: Route, execution_time: float = 0.0, 
-                      algorithm: str = "") -> 'RoutingResult':
+                      algorithm: str = "") -> RoutingResult:
         """Create a successful routing result."""
         return cls(
             success=True,
@@ -190,7 +192,7 @@ class RoutingResult:
     
     @classmethod
     def failure_result(cls, error_message: str, execution_time: float = 0.0,
-                      algorithm: str = "") -> 'RoutingResult':
+                      algorithm: str = "") -> RoutingResult:
         """Create a failed routing result."""
         return cls(
             success=False,
