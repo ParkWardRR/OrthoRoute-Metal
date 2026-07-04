@@ -180,3 +180,11 @@ iteration_*.md
 orthoroute.log.*
 orthoroute_debug.log
 orthoroute_debug.log.*
+
+# Rust build artifacts
+**/target/
+Cargo.lock
+
+# macOS
+.DS_Store
+**/.DS_Store

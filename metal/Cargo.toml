@@ -1,0 +1,20 @@
+[package]
+name = "orthoroute-metal"
+version = "1.0.0"
+edition = "2021"
+description = "Apple Metal GPU backend for OrthoRoute PCB autorouter -- replaces CUDA/CuPy with native Apple Silicon Metal compute pipelines for GPU-accelerated shortest-path graph traversal on M1/M2/M3/M4 hardware."
+repository = "https://github.com/ParkWardRR/OrthoRoute-Metal"
+license = "BlueOak-1.0.0"
+keywords = ["metal", "gpu", "pcb", "autorouter", "apple-silicon", "shortest-path", "graph-algorithms"]
+categories = ["science", "hardware-support", "algorithms"]
+readme = "README.md"
+
+[lib]
+name = "orthoroute_metal"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+pyo3 = { version = "0.29", features = ["extension-module"] }
+metal = "0.27.0"
+numpy = "0.29.0"
